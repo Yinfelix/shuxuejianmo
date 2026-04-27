@@ -1,0 +1,17 @@
+﻿node_id,node_name,priority_level,priority_weight,base_hover_time_s,direct_confirm_time_s,hover_gap_s,base_total_energy_J,confirm_total_energy_J,base_energy_feasible,confirm_energy_feasible,direct_confirmable_at_base
+5,B2-屋面排水口堵塞,高,3,50,420,370,17716.0,99116,True,True,False
+2,B1-屋顶积水,高,3,60,520,460,19517.0,120717,True,True,False
+9,B4-南外墙脱落点,高,3,55,520,465,17183.0,119483,True,True,False
+13,B6-屋顶空调机组异常,高,3,60,540,480,19154.0,124754,True,True,False
+16,B7-屋顶围挡破损,高,3,65,560,495,24086.0,132986,True,True,False
+8,B3-屋顶通信箱体,高,3,60,560,500,20904.0,130904,True,True,False
+12,B5-东侧外挂线缆,中,2,40,170,130,14532.0,43132,True,True,False
+6,B2-北立面瓷砖鼓包,中,2,40,180,140,15310.0,46110,True,True,False
+10,B4-屋顶天沟堆积,中,2,45,190,145,15200.0,47100,True,True,False
+1,B1-东立面裂缝,中,2,50,200,150,17380.0,50380,True,True,False
+7,B3-西侧窗框松动,中,2,45,200,155,17572.0,51672,True,True,False
+4,B2-空调支架锈蚀,中,2,55,240,185,18476.0,59176,True,True,False
+14,B6-西立面渗水痕迹,中,2,50,330,280,17308.0,78908,True,True,False
+15,B7-光伏棚支架松动,中,2,45,360,315,19266.0,88566,True,True,False
+3,B1-消防连廊顶部,低,1,35,110,75,13538.0,30038,True,True,False
+11,B5-屋顶消防标识遮挡,低,1,35,110,75,14363.0,30863,True,True,False

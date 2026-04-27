@@ -1,0 +1,320 @@
+{
+  "schema_version": "1.0",
+  "generated_on": "2026-04-27",
+  "source_bundle": "数学建模资料",
+  "schema_description": "面向 AI 阅读与写作辅助的数学建模资料标准化切片。每个 slice 聚焦一种可复用知识：写作框架、语言风格、格式要求、优秀讲解模式。",
+  "slice_schema": {
+    "slice_id": "唯一标识",
+    "slice_type": "writing_framework | language_style | format_requirement | explanation_pattern",
+    "applicable_to": "适用场景数组，例如 cn_contest_paper, english_contest_paper, contest_submission",
+    "source_evidence": [
+      {
+        "source_name": "来源文件名或集合名",
+        "evidence": "支撑该切片的简要证据"
+      }
+    ],
+    "content": "结构化核心内容，字段随切片类型不同而变化",
+    "usage_rules": "给 AI 或写作者的直接使用规则"
+  },
+  "slices": [
+    {
+      "slice_id": "cn_modeling_paper_framework_v1",
+      "slice_type": "writing_framework",
+      "applicable_to": [
+        "cn_contest_paper",
+        "school_contest",
+        "domestic_modeling_competition"
+      ],
+      "source_evidence": [
+        {
+          "source_name": "华数杯-C题-优秀论文/C题/CM2301722.pdf",
+          "evidence": "摘要后依次进入问题重述、问题分析，并按问题逐条建模。"
+        },
+        {
+          "source_name": "华数杯-C题-优秀论文/C题/CM2302045.pdf",
+          "evidence": "目录稳定出现问题重述、模型假设与符号说明、数据处理、模型建立、求解、评价。"
+        },
+        {
+          "source_name": "华数杯-C题-优秀论文/C题/CM2302809.pdf",
+          "evidence": "问题分析部分先解释为何选用某方法，再进入模型。"
+        }
+      ],
+      "content": {
+        "recommended_order": [
+          "标题与类别信息",
+          "摘要",
+          "关键词",
+          "问题重述",
+          "问题分析",
+          "模型假设",
+          "符号说明",
+          "数据预处理或数据说明",
+          "针对问题一的模型建立与求解",
+          "针对问题二的模型建立与求解",
+          "针对问题三的模型建立与求解",
+          "结果分析与模型检验",
+          "模型评价与推广",
+          "结论",
+          "参考文献",
+          "附录"
+        ],
+        "abstract_pattern": [
+          "先用 1 到 2 句说明现实背景和总任务",
+          "随后按“针对问题一/二/三/四/五”逐条概述方法、结果和数值结论",
+          "最后给出模型整体优点、适用性或改进方向",
+          "摘要末尾单列关键词"
+        ],
+        "section_granularity": {
+          "problem_restatement": "重述题意，不求推导，只求任务清晰",
+          "problem_analysis": "必须回答每问为什么选这个模型或算法",
+          "per_problem_sections": "每问建议拆为分析、建模、求解、结果四步",
+          "evaluation": "至少包含准确率、误差、灵敏度、可行性中的一种"
+        }
+      },
+      "usage_rules": [
+        "如果是中文竞赛论文，优先使用这一框架，不要一上来直接堆公式。",
+        "问题分析必须服务于方法选择，而不是重复题意。",
+        "每个问题段落都要落到“方法 + 结果 + 解释”闭环。"
+      ]
+    },
+    {
+      "slice_id": "english_contest_paper_framework_v1",
+      "slice_type": "writing_framework",
+      "applicable_to": [
+        "english_contest_paper",
+        "mcm_icm_style",
+        "international_modeling_competition"
+      ],
+      "source_evidence": [
+        {
+          "source_name": "2022美赛特等奖论文集/.../2200289.pdf",
+          "evidence": "开头为 Problem Chosen 与 Summary Sheet，摘要按 Model 1/Model 2/Extension 组织。"
+        },
+        {
+          "source_name": "认证杯优秀论文样本",
+          "evidence": "存在 Team #、编号专用页、Abstract/Summary、匿名编号页等前置部分。"
+        }
+      ],
+      "content": {
+        "recommended_order": [
+          "Problem Chosen / Summary Sheet / Team Control Number",
+          "Abstract or Summary",
+          "Nomenclature or Assumptions if needed",
+          "Problem Restatement",
+          "Model Assumptions",
+          "Model Development",
+          "Model Solution",
+          "Sensitivity Analysis",
+          "Model Evaluation",
+          "Conclusions",
+          "References",
+          "Appendix"
+        ],
+        "abstract_pattern": [
+          "首句说明研究对象和总目标",
+          "按 Model 1 / Model 2 / Extension 或 For question 1/2/3 组织",
+          "每段要写出方法、结果和解释，不只写“we build a model”",
+          "英文摘要更强调结论压缩和可量化结果"
+        ]
+      },
+      "usage_rules": [
+        "国际赛写法优先强调匿名、题号、摘要页和英文一致性。",
+        "英文摘要用结果导向句式，避免空泛评价。"
+      ]
+    },
+    {
+      "slice_id": "cn_modeling_language_style_v1",
+      "slice_type": "language_style",
+      "applicable_to": [
+        "cn_contest_paper"
+      ],
+      "source_evidence": [
+        {
+          "source_name": "华数杯-C题-优秀论文/C题/CM2301722.pdf",
+          "evidence": "大量使用“针对问题一/二/三”串联摘要与正文。"
+        },
+        {
+          "source_name": "华数杯-C题-优秀论文/C题/CM2302045.pdf",
+          "evidence": "语言正式、客观、结果先行，并辅以模型评估。"
+        },
+        {
+          "source_name": "华数杯-C题-优秀论文/C题/CM2305165.pdf",
+          "evidence": "先给处理动作，再给模型方法，再给定量结论。"
+        }
+      ],
+      "content": {
+        "tone": [
+          "正式",
+          "克制",
+          "结果导向",
+          "少形容词，多事实和方法"
+        ],
+        "preferred_connectors": [
+          "首先",
+          "其次",
+          "然后",
+          "接着",
+          "最后",
+          "综上所述",
+          "针对问题一",
+          "由此可得"
+        ],
+        "sentence_patterns": [
+          "首先进行数据预处理，然后建立X模型，最后得到Y结论。",
+          "针对问题一，采用A方法分析B之间的关系，结果表明C。",
+          "结合混淆矩阵与准确率对模型进行评估，说明模型有效。"
+        ],
+        "avoid": [
+          "长段空泛背景铺陈",
+          "没有数据支撑的强结论",
+          "只写模型名不写使用原因",
+          "结果段完全不解释现实意义"
+        ]
+      },
+      "usage_rules": [
+        "中文数模论文的摘要和问题分析都适合使用“分问题并列 + 方法结论配对”的句型。",
+        "优先用“模型名 + 使用目的 + 结论”三联表达。"
+      ]
+    },
+    {
+      "slice_id": "contest_format_requirements_v1",
+      "slice_type": "format_requirement",
+      "applicable_to": [
+        "contest_submission",
+        "cn_contest_paper"
+      ],
+      "source_evidence": [
+        {
+          "source_name": "user_provided_paper_requirements_2026-04-27",
+          "evidence": "用户明确给出 8 条论文格式要求，并要求删除其他赛事要求，仅保留这些论文要求。"
+        }
+      ],
+      "content": {
+        "accepted_file_formats": [
+          "论文只接受 Word 格式和 PDF 格式。",
+          "如果还有其他材料，应压缩为 RAR 或 ZIP 格式。",
+          "评阅时忽略上述四类格式之外的其他文件。"
+        ],
+        "multiple_submission_rule": [
+          "如果一个队提交多篇论文，只评阅赛题编号字母靠前的论文。",
+          "例如提交了 A 论文，则忽略该队其他论文。"
+        ],
+        "anonymity_and_manuscript_rules": [
+          "论文不接受手写稿。",
+          "论文中不能有任何手写以及修改痕迹。",
+          "论文正文中不能出现任一作者名字，否则视为违规并取消评阅资格。",
+          "名字只允许在文件名中出现。"
+        ],
+        "layout_rules": {
+          "printing": "论文不需要打印。",
+          "page_margin_cm_min": 2.5,
+          "margin_description": "排版时上下左右各留至少 2.5 厘米页边距。"
+        },
+        "pagination_and_typography": {
+          "page_numbering": [
+            "论文第 1 页开始编号。",
+            "页码必须位于每页页脚中部。",
+            "页码使用阿拉伯数字。",
+            "不能有页眉。"
+          ],
+          "title": "论文题目用三号黑体字。",
+          "level_1_heading": "一级标题用四号黑体字，并居中。",
+          "level_2_3_heading": "二级、三级标题用小四号黑体字，左端对齐，不居中。",
+          "body_text": "其他汉字一律采用小四号宋体字。",
+          "line_spacing": "单倍行距。"
+        },
+        "abstract_rules": [
+          "摘要应为简明扼要的详细摘要，并包含关键词。",
+          "摘要在整篇论文中占有重要权重，应认真书写。",
+          "摘要排版时应单独一页。",
+          "摘要篇幅不能超过一页。",
+          "摘要无需译成英文。"
+        ],
+        "paper_structure_rules": {
+          "clarity": "论文应思路清晰，表达简洁。",
+          "body_page_limit": "正文尽量控制在 30 页以内。",
+          "appendix_limit": "附录页数不限。",
+          "program_requirement": "不必附带程序。",
+          "required_sections": [
+            "摘要",
+            "问题介绍",
+            "模型假设",
+            "模型分析",
+            "模型建立",
+            "模型解决",
+            "模型检验",
+            "结论",
+            "参考文献"
+          ],
+          "incomplete_structure_penalty": "内容结构不完整的论文会被评为不成功参赛。"
+        },
+        "reference_format": {
+          "book": "[编号]作者，书名，出版地：出版社，出版年，版次。",
+          "journal": "[编号]作者，论文名，杂志名，卷期号：起止页码，出版年。",
+          "web": "[编号]作者，资源标题，网址，访问时间(年月日)。"
+        }
+      },
+      "usage_rules": [
+        "该切片只保留用户明确给出的论文格式要求，不再包含报名、组队、英文赛题、承诺书等其他赛事要求。",
+        "如果后续继续补充格式规范，应只在这一组字段内追加，不要重新混入赛事说明类信息。"
+      ]
+    },
+    {
+      "slice_id": "excellent_explanation_patterns_v1",
+      "slice_type": "explanation_pattern",
+      "applicable_to": [
+        "ai_writing_assistant",
+        "paper_revision",
+        "modeling_report"
+      ],
+      "source_evidence": [
+        {
+          "source_name": "华数杯-C题-优秀论文/C题/CM2302809.pdf",
+          "evidence": "问题分析先讨论变量关联性，再说明为什么按年龄分层、为何选随机森林。"
+        },
+        {
+          "source_name": "华数杯-C题-优秀论文/C题/CM2302045.pdf",
+          "evidence": "在摘要中直接给出模型筛选过程、评估方式和最优模型。"
+        },
+        {
+          "source_name": "铁路售票样本、疫情模型样本",
+          "evidence": "优秀论文常在结尾补模型评价、推广性、甚至给管理部门公开信。"
+        }
+      ],
+      "content": {
+        "good_explanation_blocks": [
+          {
+            "name": "问题分析块",
+            "pattern": "任务目标 -> 数据特点/限制 -> 候选方法 -> 选择理由 -> 预期产出"
+          },
+          {
+            "name": "摘要问题分块",
+            "pattern": "针对问题k -> 数据处理动作 -> 模型方法 -> 定量结果 -> 结论意义"
+          },
+          {
+            "name": "结果解释块",
+            "pattern": "先报数值结果 -> 再解释原因 -> 再解释现实含义或策略建议"
+          },
+          {
+            "name": "模型评价块",
+            "pattern": "优点 -> 局限 -> 误差来源 -> 可改进方向"
+          },
+          {
+            "name": "策略建议块",
+            "pattern": "把模型结论翻译成配置建议、阈值建议、阶段性决策建议"
+          }
+        ],
+        "high_value_signals": [
+          "有明确的模型选择理由",
+          "有模型评估指标或误差分析",
+          "有边界条件、假设和适用范围说明",
+          "有结果到现实决策的映射"
+        ]
+      },
+      "usage_rules": [
+        "AI 生成论文时，不要只给出公式；必须补“为什么这样建模”和“结果说明了什么”。",
+        "如果篇幅允许，优先保留问题分析、模型评价和策略建议，这三块最能拉开质量差距。"
+      ]
+    }
+  ]
+}

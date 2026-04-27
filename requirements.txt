@@ -1,0 +1,15 @@
+ipykernel
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+sympy
+scikit-learn
+statsmodels
+networkx
+pulp
+openpyxl
+xlsxwriter
+tabulate
+tqdm
