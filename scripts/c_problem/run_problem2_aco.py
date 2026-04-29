@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from random import Random
 from time import perf_counter
@@ -11,12 +12,33 @@ from problem2_f_guidance import DEFAULT_WEIGHT_VECTOR, WEIGHT_KEYS, build_guidan
 from run_problem2_joint import _summarize_node_state
 
 
-ANT_COUNT = 20
-ITERATIONS = 26
-EVAPORATION = 0.24
-TOP_ANTS = 4
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return int(raw)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return float(raw)
+
+
+def _env_seeds(name: str, default: list[int]) -> list[int]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return [int(part.strip()) for part in raw.split(",") if part.strip()]
+
+
+ANT_COUNT = _env_int("C_PROBLEM_ACO_ANTS", 20)
+ITERATIONS = _env_int("C_PROBLEM_ACO_ITERATIONS", 26)
+EVAPORATION = _env_float("C_PROBLEM_ACO_EVAPORATION", 0.24)
+TOP_ANTS = _env_int("C_PROBLEM_ACO_TOP", 4)
 WEIGHT_LEVELS = [0.0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4]
-SEEDS = [11, 23]
+SEEDS = _env_seeds("C_PROBLEM_ACO_SEEDS", [11, 23])
 
 
 def _sample_level_indices(pheromone: list[list[float]], rng: Random) -> list[int]:

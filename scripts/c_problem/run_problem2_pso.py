@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import exp
+import os
 from pathlib import Path
 from random import Random
 from time import perf_counter
@@ -12,13 +13,34 @@ from problem2_f_guidance import DEFAULT_WEIGHT_VECTOR, WEIGHT_KEYS, build_guidan
 from run_problem2_joint import _summarize_node_state
 
 
-PARTICLE_COUNT = 18
-ITERATIONS = 32
-INERTIA = 0.72
-COGNITIVE = 1.45
-SOCIAL = 1.45
-VELOCITY_CLAMP = 0.55
-SEEDS = [11, 23]
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return int(raw)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return float(raw)
+
+
+def _env_seeds(name: str, default: list[int]) -> list[int]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return [int(part.strip()) for part in raw.split(",") if part.strip()]
+
+
+PARTICLE_COUNT = _env_int("C_PROBLEM_PSO_PARTICLES", 18)
+ITERATIONS = _env_int("C_PROBLEM_PSO_ITERATIONS", 32)
+INERTIA = _env_float("C_PROBLEM_PSO_INERTIA", 0.72)
+COGNITIVE = _env_float("C_PROBLEM_PSO_COGNITIVE", 1.45)
+SOCIAL = _env_float("C_PROBLEM_PSO_SOCIAL", 1.45)
+VELOCITY_CLAMP = _env_float("C_PROBLEM_PSO_VELOCITY_CLAMP", 0.55)
+SEEDS = _env_seeds("C_PROBLEM_PSO_SEEDS", [11, 23])
 
 
 def _sigmoid(value: float) -> float:

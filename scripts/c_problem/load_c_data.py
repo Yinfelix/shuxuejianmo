@@ -79,6 +79,60 @@ def _build_ground_time_fallback(manual_points: pd.DataFrame, params: pd.DataFram
     return matrix
 
 
+def _flight_leg_metrics(
+    from_xyz: tuple[float, float, float],
+    to_xyz: tuple[float, float, float],
+    params: pd.DataFrame,
+) -> tuple[float, float]:
+    horizontal_speed = float(parameter_value(params, "horizontal_speed_mps", 12.0) or 12.0)
+    vertical_speed = float(parameter_value(params, "vertical_speed_mps", 4.0) or 4.0)
+    horizontal_energy = float(parameter_value(params, "horizontal_energy_J_per_m", 16.5) or 16.5)
+    up_energy = float(parameter_value(params, "up_energy_J_per_m", 23.0) or 23.0)
+    down_energy = float(parameter_value(params, "down_energy_J_per_m", 12.0) or 12.0)
+
+    from_x, from_y, from_z = from_xyz
+    to_x, to_y, to_z = to_xyz
+    horizontal_distance = hypot(from_x - to_x, from_y - to_y)
+    vertical_delta = to_z - from_z
+    ascent = max(0.0, vertical_delta)
+    descent = max(0.0, -vertical_delta)
+
+    travel_time = horizontal_distance / horizontal_speed + (ascent + descent) / vertical_speed
+    travel_energy = horizontal_distance * horizontal_energy + ascent * up_energy + descent * down_energy
+    return travel_time, travel_energy
+
+
+def _fill_flight_fallback_edges(
+    nodes: pd.DataFrame,
+    params: pd.DataFrame,
+    flight_time: pd.DataFrame,
+    flight_energy: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    filled_time = flight_time.copy()
+    filled_energy = flight_energy.copy()
+
+    coord_table = nodes[["node_id", "x_m", "y_m", "z_m"]].copy()
+    coord_table = coord_table.dropna(subset=["node_id", "x_m", "y_m", "z_m"])
+    coord_map = {
+        str(int(row.node_id)): (float(row.x_m), float(row.y_m), float(row.z_m))
+        for row in coord_table.itertuples(index=False)
+    }
+    for from_key, from_coords in coord_map.items():
+        for to_key, to_coords in coord_map.items():
+            if from_key == to_key:
+                filled_time.loc[from_key, to_key] = 0.0
+                filled_energy.loc[from_key, to_key] = 0.0
+                continue
+
+            leg_time, leg_energy = _flight_leg_metrics(from_coords, to_coords, params)
+            if pd.isna(filled_time.loc[from_key, to_key]):
+                filled_time.loc[from_key, to_key] = leg_time
+            if pd.isna(filled_energy.loc[from_key, to_key]):
+                filled_energy.loc[from_key, to_key] = leg_energy
+
+    return filled_time, filled_energy
+
+
 def load_c_problem_data(workbook: Path | None = None) -> CProblemData:
     workbook = workbook or WORKBOOK_PATH
     workbook = Path(workbook)
@@ -120,6 +174,8 @@ def load_c_problem_data(workbook: Path | None = None) -> CProblemData:
 
     if ground_time.isna().all().all():
         ground_time = _build_ground_time_fallback(manual_points, params)
+
+    flight_time, flight_energy = _fill_flight_fallback_edges(nodes, params, flight_time, flight_energy)
 
     return CProblemData(
         params=params,

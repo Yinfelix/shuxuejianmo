@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from random import Random
 from time import perf_counter
@@ -17,13 +18,34 @@ from problem2_f_guidance import (
 from run_problem2_joint import _summarize_node_state
 
 
-POPULATION_SIZE = 18
-GENERATIONS = 28
-ELITE_COUNT = 4
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return int(raw)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return float(raw)
+
+
+def _env_seeds(name: str, default: list[int]) -> list[int]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return [int(part.strip()) for part in raw.split(",") if part.strip()]
+
+
+POPULATION_SIZE = _env_int("C_PROBLEM_GA_POPULATION", 18)
+GENERATIONS = _env_int("C_PROBLEM_GA_GENERATIONS", 28)
+ELITE_COUNT = _env_int("C_PROBLEM_GA_ELITE", 4)
 TOURNAMENT_SIZE = 3
-MUTATION_RATE = 0.28
-MUTATION_STEP = 0.35
-SEEDS = [11, 23]
+MUTATION_RATE = _env_float("C_PROBLEM_GA_MUTATION_RATE", 0.28)
+MUTATION_STEP = _env_float("C_PROBLEM_GA_MUTATION_STEP", 0.35)
+SEEDS = _env_seeds("C_PROBLEM_GA_SEEDS", [11, 23])
 
 
 def _random_vector(rng: Random) -> list[float]:
