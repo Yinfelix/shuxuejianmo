@@ -1,0 +1,3 @@
+﻿drone_count,seed_count,original_total_closed_loop_s,best_optimized_total_closed_loop_s,mean_optimized_total_closed_loop_s,std_optimized_total_closed_loop_s,best_gain_vs_original_s,mean_gain_vs_original_s,std_gain_vs_original_s,improved_seed_ratio,best_seed,best_move_tag,best_optimized_route_count,best_direct_confirm_count,search_method
+1,2,5324.422872828103,5293.070203412075,5308.746538120089,15.67633470801411,31.35266941602822,15.67633470801411,15.67633470801411,0.5,11,alns_priority_remove,2,2,alns
+2,2,4550.577345117163,4550.577345117163,4550.577345117163,0.0,0.0,0.0,0.0,0.0,11,original,2,2,alns

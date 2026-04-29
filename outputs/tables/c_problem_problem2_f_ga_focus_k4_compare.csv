@@ -1,0 +1,2 @@
+﻿drone_count,baseline_s,f_default_s,f_default_direct_confirm_count,f_ga_best_s,f_ga_best_direct_confirm_count,f_ga_best_seed,f_ga_best_runtime_s,f_ga_gain_vs_default_s,best_selected_nodes,best_manual_route,ground_route_method
+4,4533.150608781005,3540.6685990788646,7,3540.6685990788646,7,11,1072.243680700005,0.0,"1,7,10,12,11,6,3",P0-MP09-MP08-MP04-MP05-MP02-MP13-MP14-MP15-MP16-P0,two_opt

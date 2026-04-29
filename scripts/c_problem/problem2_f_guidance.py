@@ -9,7 +9,7 @@ from run_problem1_heuristic import solve_for_drone_count
 from run_problem2_joint import (
     _build_manual_review_table,
     _build_node_state,
-    _nearest_neighbor_path,
+    optimize_ground_review_path,
     _route_travel_savings,
     _summarize_node_state,
 )
@@ -134,7 +134,7 @@ def _scored_candidates(
         return []
 
     manual_point_ids = pending_manual["manual_point_id"].astype(str).tolist()
-    manual_route, _ = _nearest_neighbor_path(ground_time, manual_point_ids)
+    manual_route, _ = optimize_ground_review_path(ground_time, manual_point_ids, method="two_opt")
     travel_savings = _route_travel_savings(ground_time, manual_route)
 
     raw_candidates: list[dict[str, float | int | str]] = []

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
+from functools import lru_cache
 
 import pandas as pd
 
@@ -9,6 +11,23 @@ from run_problem1_heuristic import solve_for_drone_count
 
 
 DEPOT_MANUAL_ID = "P0"
+
+
+def _ground_edge_time(ground_time: pd.DataFrame, from_point: str, to_point: str) -> float | None:
+    travel_value = pd.to_numeric(pd.Series([ground_time.loc[from_point, to_point]]), errors="coerce").iloc[0]
+    if pd.isna(travel_value):
+        return None
+    return float(travel_value)
+
+
+def _route_travel_time(ground_time: pd.DataFrame, route: list[str]) -> float:
+    travel_time = 0.0
+    for from_point, to_point in zip(route, route[1:], strict=False):
+        edge_time = _ground_edge_time(ground_time, from_point, to_point)
+        if edge_time is None:
+            raise RuntimeError(f"No finite ground-time edge found from {from_point} to {to_point}")
+        travel_time += edge_time
+    return travel_time
 
 
 def _nearest_neighbor_path(ground_time: pd.DataFrame, points: list[str], start: str = DEPOT_MANUAL_ID) -> tuple[list[str], float]:
@@ -41,6 +60,120 @@ def _nearest_neighbor_path(ground_time: pd.DataFrame, points: list[str], start: 
     travel_time += float(return_value)
     route.append(start)
     return route, travel_time
+
+
+def _two_opt_path(ground_time: pd.DataFrame, points: list[str], start: str = DEPOT_MANUAL_ID) -> tuple[list[str], float]:
+    route, _ = _nearest_neighbor_path(ground_time, points, start=start)
+    if len(route) <= 4:
+        return route, _route_travel_time(ground_time, route)
+
+    best_route = route
+    best_cost = _route_travel_time(ground_time, best_route)
+    improved = True
+    while improved:
+        improved = False
+        for left in range(1, len(best_route) - 2):
+            for right in range(left + 1, len(best_route) - 1):
+                if right - left == 1:
+                    continue
+                candidate_route = best_route[:left] + list(reversed(best_route[left:right])) + best_route[right:]
+                candidate_cost = _route_travel_time(ground_time, candidate_route)
+                if candidate_cost + 1e-9 < best_cost:
+                    best_route = candidate_route
+                    best_cost = candidate_cost
+                    improved = True
+                    break
+            if improved:
+                break
+    return best_route, best_cost
+
+
+def _exact_tsp_path(ground_time: pd.DataFrame, points: list[str], start: str = DEPOT_MANUAL_ID) -> tuple[list[str], float]:
+    if not points:
+        return [start, start], 0.0
+
+    ordered_points = tuple(sorted(set(points)))
+    point_count = len(ordered_points)
+
+    @lru_cache(maxsize=None)
+    def dp(mask: int, last_index: int) -> float:
+        last_point = ordered_points[last_index]
+        if mask == (1 << last_index):
+            start_edge = _ground_edge_time(ground_time, start, last_point)
+            if start_edge is None:
+                return math.inf
+            return start_edge
+
+        best_cost = math.inf
+        previous_mask = mask ^ (1 << last_index)
+        for previous_index in range(point_count):
+            if not (previous_mask & (1 << previous_index)):
+                continue
+            transition = _ground_edge_time(ground_time, ordered_points[previous_index], last_point)
+            if transition is None:
+                continue
+            candidate_cost = dp(previous_mask, previous_index) + transition
+            if candidate_cost < best_cost:
+                best_cost = candidate_cost
+        return best_cost
+
+    full_mask = (1 << point_count) - 1
+    best_last_index = -1
+    best_cost = math.inf
+    for last_index in range(point_count):
+        return_edge = _ground_edge_time(ground_time, ordered_points[last_index], start)
+        if return_edge is None:
+            continue
+        candidate_cost = dp(full_mask, last_index) + return_edge
+        if candidate_cost < best_cost:
+            best_cost = candidate_cost
+            best_last_index = last_index
+
+    if best_last_index < 0 or not math.isfinite(best_cost):
+        raise RuntimeError(f"No finite exact ground-review tour found for points {sorted(ordered_points)}")
+
+    route_indices = [best_last_index]
+    mask = full_mask
+    last_index = best_last_index
+    while mask != (1 << last_index):
+        previous_mask = mask ^ (1 << last_index)
+        previous_choice = -1
+        for previous_index in range(point_count):
+            if not (previous_mask & (1 << previous_index)):
+                continue
+            transition = _ground_edge_time(ground_time, ordered_points[previous_index], ordered_points[last_index])
+            if transition is None:
+                continue
+            if abs(dp(mask, last_index) - (dp(previous_mask, previous_index) + transition)) <= 1e-9:
+                previous_choice = previous_index
+                break
+        if previous_choice < 0:
+            raise RuntimeError("Failed to reconstruct exact ground-review route")
+        route_indices.append(previous_choice)
+        mask = previous_mask
+        last_index = previous_choice
+
+    route_indices.reverse()
+    route = [start, *(ordered_points[index] for index in route_indices), start]
+    return route, best_cost
+
+
+def optimize_ground_review_path(
+    ground_time: pd.DataFrame,
+    points: list[str],
+    start: str = DEPOT_MANUAL_ID,
+    method: str = "two_opt",
+) -> tuple[list[str], float]:
+    unique_points = [point for point in dict.fromkeys(points) if point != start]
+    if not unique_points:
+        return [start, start], 0.0
+    if method == "nearest":
+        return _nearest_neighbor_path(ground_time, unique_points, start=start)
+    if method == "two_opt":
+        return _two_opt_path(ground_time, unique_points, start=start)
+    if method == "exact":
+        return _exact_tsp_path(ground_time, unique_points, start=start)
+    raise ValueError(f"Unsupported ground-review route method: {method}")
 
 
 def _route_travel_savings(ground_time: pd.DataFrame, route: list[str]) -> dict[str, float]:
@@ -108,10 +241,15 @@ def _summarize_node_state(
     drone_count: int,
     solution_type: str,
     selected_nodes: list[str] | None = None,
+    ground_route_method: str = "two_opt",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     pending_manual = _build_manual_review_table(node_state, manual_points)
     manual_point_ids = pending_manual["manual_point_id"].astype(str).tolist()
-    manual_route, ground_travel_time = _nearest_neighbor_path(ground_time, manual_point_ids)
+    manual_route, ground_travel_time = optimize_ground_review_path(
+        ground_time,
+        manual_point_ids,
+        method=ground_route_method,
+    )
     ground_service_time = float(pending_manual["manual_service_time_s"].fillna(0.0).sum())
     ground_completion_time = ground_travel_time + ground_service_time
 
@@ -137,6 +275,7 @@ def _summarize_node_state(
                 "added_hover_time_s": total_added_hover,
                 "selected_direct_confirm_nodes": ",".join(selected_nodes or []),
                 "manual_route": "-".join(manual_route),
+                "ground_route_method": ground_route_method,
             }
         ]
     )
@@ -224,6 +363,7 @@ def evaluate_selected_nodes(
         drone_count=drone_count,
         solution_type=solution_type,
         selected_nodes=[str(node_id) for node_id in selected_node_ids],
+        ground_route_method="two_opt",
     )
     return summary, detail, True
 
@@ -251,7 +391,7 @@ def _greedy_extra_hover(
     while True:
         pending_manual = _build_manual_review_table(node_state, manual_points)
         manual_point_ids = pending_manual["manual_point_id"].astype(str).tolist()
-        manual_route, _ = _nearest_neighbor_path(ground_time, manual_point_ids)
+        manual_route, _ = optimize_ground_review_path(ground_time, manual_point_ids, method="two_opt")
         travel_savings = _route_travel_savings(ground_time, manual_route)
         service_times = pending_manual.set_index("manual_point_id")["manual_service_time_s"].to_dict()
 
