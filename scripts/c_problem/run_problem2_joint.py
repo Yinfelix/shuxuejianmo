@@ -1,237 +1,223 @@
 from __future__ import annotations
 
-import math
+from dataclasses import dataclass, field
 from pathlib import Path
-from functools import lru_cache
 
 import pandas as pd
 
 from load_c_data import WORKBOOK_PATH, load_c_problem_data, parameter_value
-from run_problem1_heuristic import solve_for_drone_count
 
 
-DEPOT_MANUAL_ID = "P0"
+DEPOT_ID = 0
+MANUAL_DEPOT_ID = "P0"
+PROBLEM1_SUMMARY_PATH = Path("outputs/tables/c_problem_problem1_heuristic_summary.csv")
+PROBLEM1_DETAIL_PATH = Path("data/processed/c_problem_problem1_route_detail.csv")
 
 
-def _ground_edge_time(ground_time: pd.DataFrame, from_point: str, to_point: str) -> float | None:
-    travel_value = pd.to_numeric(pd.Series([ground_time.loc[from_point, to_point]]), errors="coerce").iloc[0]
-    if pd.isna(travel_value):
-        return None
-    return float(travel_value)
+@dataclass
+class RouteState:
+    drone_id: int
+    route_id: int
+    route_order: int
+    stops: list[int]
+    hover_times_s: dict[int, float]
+    duration_s: float
+    energy_j: float
+    mode: str = "base"
 
 
-def _route_travel_time(ground_time: pd.DataFrame, route: list[str]) -> float:
-    travel_time = 0.0
-    for from_point, to_point in zip(route, route[1:], strict=False):
-        edge_time = _ground_edge_time(ground_time, from_point, to_point)
-        if edge_time is None:
-            raise RuntimeError(f"No finite ground-time edge found from {from_point} to {to_point}")
-        travel_time += edge_time
-    return travel_time
+@dataclass
+class DroneState:
+    drone_id: int
+    routes: list[RouteState] = field(default_factory=list)
+    total_time_s: float = 0.0
 
 
-def _nearest_neighbor_path(ground_time: pd.DataFrame, points: list[str], start: str = DEPOT_MANUAL_ID) -> tuple[list[str], float]:
-    if not points:
-        return [start, start], 0.0
+@dataclass
+class CandidateAction:
+    node_id: int
+    action_type: str
+    drone_id: int
+    route_id: int | None
+    added_air_time_s: float
+    added_energy_j: float
+    route_duration_s: float
+    route_energy_j: float
+    new_closed_loop_s: float
+    improvement_s: float
 
-    unvisited = set(points)
-    route = [start]
-    current = start
-    travel_time = 0.0
 
-    while unvisited:
-        candidates = []
-        for point in unvisited:
-            travel_value = pd.to_numeric(pd.Series([ground_time.loc[current, point]]), errors="coerce").iloc[0]
-            if pd.notna(travel_value):
-                candidates.append((float(travel_value), point))
-        if not candidates:
-            raise RuntimeError(f"No finite ground-time edge found from {current} to remaining points {sorted(unvisited)}")
-        candidates.sort(key=lambda item: (item[0], item[1]))
-        _, next_point = candidates[0]
-        travel_time += float(ground_time.loc[current, next_point])
-        route.append(next_point)
-        unvisited.remove(next_point)
+@dataclass
+class SwapCandidate:
+    left_drone_id: int
+    left_route_id: int
+    left_node_id: int
+    right_drone_id: int
+    right_route_id: int
+    right_node_id: int
+    left_route_stops: list[int]
+    right_route_stops: list[int]
+    left_hover_times_s: dict[int, float]
+    right_hover_times_s: dict[int, float]
+    left_route_duration_s: float
+    left_route_energy_j: float
+    right_route_duration_s: float
+    right_route_energy_j: float
+    new_closed_loop_s: float
+    improvement_s: float
+
+
+def _metric(matrix: pd.DataFrame, from_id: int | str, to_id: int | str) -> float:
+    return float(matrix.loc[str(from_id), str(to_id)])
+
+
+def _load_problem1_solution() -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not PROBLEM1_SUMMARY_PATH.exists() or not PROBLEM1_DETAIL_PATH.exists():
+        raise FileNotFoundError(
+            "Problem 1 outputs are missing. Run scripts/c_problem/run_problem1_heuristic.py first."
+        )
+    return pd.read_csv(PROBLEM1_SUMMARY_PATH), pd.read_csv(PROBLEM1_DETAIL_PATH)
+
+
+def _build_target_table(data, threshold_multiplier: float = 1.0) -> pd.DataFrame:
+    merged = data.nodes.loc[data.nodes["node_id"] != 0].copy()
+    for column in ["base_hover_time_s", "direct_confirm_time_s", "priority_weight", "manual_service_time_s"]:
+        merged[column] = pd.to_numeric(merged[column], errors="coerce")
+    merged["manual_point_id"] = merged["manual_point_id"].astype(str)
+    merged["direct_confirm_time_s"] = merged["direct_confirm_time_s"] * threshold_multiplier
+    merged["threshold_multiplier"] = threshold_multiplier
+    merged["hover_gap_s"] = merged["direct_confirm_time_s"] - merged["base_hover_time_s"]
+    return merged
+
+
+def _build_drone_states(detail_df: pd.DataFrame, drone_count: int) -> dict[int, DroneState]:
+    states: dict[int, DroneState] = {}
+    slice_df = detail_df.loc[detail_df["drone_count"] == drone_count].copy()
+    for (drone_id, route_id), route_group in slice_df.groupby(["drone_id", "route_id"], sort=True):
+        route_group = route_group.sort_values("stop_order")
+        route = RouteState(
+            drone_id=int(drone_id),
+            route_id=int(route_id),
+            route_order=int(route_group["route_order"].iloc[0]),
+            stops=[int(value) for value in route_group["node_id"].tolist()],
+            hover_times_s={
+                int(node_id): float(hover_time)
+                for node_id, hover_time in zip(route_group["node_id"], route_group["hover_time_s"], strict=False)
+            },
+            duration_s=float(route_group["route_duration_s"].iloc[0]),
+            energy_j=float(route_group["route_energy_j"].iloc[0]),
+            mode="base",
+        )
+        state = states.setdefault(int(drone_id), DroneState(drone_id=int(drone_id)))
+        state.routes.append(route)
+        state.total_time_s = float(route_group["drone_total_time_s"].iloc[0])
+    for state in states.values():
+        state.routes.sort(key=lambda item: item.route_order)
+    return states
+
+
+def _build_node_state(problem1_detail: pd.DataFrame, nodes: pd.DataFrame) -> pd.DataFrame:
+    route_context = problem1_detail.copy()
+    route_context["node_id"] = route_context["node_id"].astype(int)
+    route_context["hover_time_s"] = pd.to_numeric(route_context["hover_time_s"], errors="coerce")
+    merged = nodes.loc[nodes["node_id"] != 0].copy().merge(
+        route_context[
+            [
+                "node_id",
+                "drone_id",
+                "route_id",
+                "hover_time_s",
+                "route_duration_s",
+                "route_energy_j",
+                "drone_total_time_s",
+            ]
+        ],
+        on="node_id",
+        how="left",
+    )
+    merged["allocated_hover_time_s"] = pd.to_numeric(merged["hover_time_s"], errors="coerce").fillna(0.0)
+    merged["extra_hover_added_s"] = 0.0
+    merged["direct_confirmed"] = merged["allocated_hover_time_s"] >= pd.to_numeric(merged["direct_confirm_time_s"], errors="coerce").fillna(0.0)
+    merged["confirmed_by_extra_hover"] = False
+    return merged
+
+
+def _route_for_node(drone_states: dict[int, DroneState], node_id: int) -> tuple[DroneState, RouteState] | None:
+    for drone_state in drone_states.values():
+        for route in drone_state.routes:
+            if node_id in route.stops:
+                return drone_state, route
+    return None
+
+
+def _ground_travel_time(path: list[str], ground_time: pd.DataFrame) -> float:
+    return sum(_metric(ground_time, from_id, to_id) for from_id, to_id in zip(path, path[1:], strict=False))
+
+
+def _ground_path(manual_point_ids: list[str], ground_time: pd.DataFrame) -> list[str]:
+    if not manual_point_ids:
+        return [MANUAL_DEPOT_ID, MANUAL_DEPOT_ID]
+
+    remaining = set(manual_point_ids)
+    current = MANUAL_DEPOT_ID
+    path = [MANUAL_DEPOT_ID]
+    while remaining:
+        next_point = min(remaining, key=lambda point_id: _metric(ground_time, current, point_id))
+        path.append(next_point)
+        remaining.remove(next_point)
         current = next_point
+    path.append(MANUAL_DEPOT_ID)
 
-    return_value = pd.to_numeric(pd.Series([ground_time.loc[current, start]]), errors="coerce").iloc[0]
-    if pd.isna(return_value):
-        raise RuntimeError(f"No finite ground-time edge found from {current} back to {start}")
-    travel_time += float(return_value)
-    route.append(start)
-    return route, travel_time
-
-
-def _two_opt_path(ground_time: pd.DataFrame, points: list[str], start: str = DEPOT_MANUAL_ID) -> tuple[list[str], float]:
-    route, _ = _nearest_neighbor_path(ground_time, points, start=start)
-    if len(route) <= 4:
-        return route, _route_travel_time(ground_time, route)
-
-    best_route = route
-    best_cost = _route_travel_time(ground_time, best_route)
     improved = True
+    best = path
     while improved:
         improved = False
-        for left in range(1, len(best_route) - 2):
-            for right in range(left + 1, len(best_route) - 1):
-                if right - left == 1:
-                    continue
-                candidate_route = best_route[:left] + list(reversed(best_route[left:right])) + best_route[right:]
-                candidate_cost = _route_travel_time(ground_time, candidate_route)
+        best_cost = _ground_travel_time(best, ground_time)
+        for left in range(1, len(best) - 2):
+            for right in range(left + 1, len(best) - 1):
+                candidate = best[:left] + best[left : right + 1][::-1] + best[right + 1 :]
+                candidate_cost = _ground_travel_time(candidate, ground_time)
                 if candidate_cost + 1e-9 < best_cost:
-                    best_route = candidate_route
-                    best_cost = candidate_cost
+                    best = candidate
                     improved = True
                     break
             if improved:
                 break
-    return best_route, best_cost
+    return best
 
 
-def _exact_tsp_path(ground_time: pd.DataFrame, points: list[str], start: str = DEPOT_MANUAL_ID) -> tuple[list[str], float]:
-    if not points:
-        return [start, start], 0.0
-
-    ordered_points = tuple(sorted(set(points)))
-    point_count = len(ordered_points)
-
-    @lru_cache(maxsize=None)
-    def dp(mask: int, last_index: int) -> float:
-        last_point = ordered_points[last_index]
-        if mask == (1 << last_index):
-            start_edge = _ground_edge_time(ground_time, start, last_point)
-            if start_edge is None:
-                return math.inf
-            return start_edge
-
-        best_cost = math.inf
-        previous_mask = mask ^ (1 << last_index)
-        for previous_index in range(point_count):
-            if not (previous_mask & (1 << previous_index)):
-                continue
-            transition = _ground_edge_time(ground_time, ordered_points[previous_index], last_point)
-            if transition is None:
-                continue
-            candidate_cost = dp(previous_mask, previous_index) + transition
-            if candidate_cost < best_cost:
-                best_cost = candidate_cost
-        return best_cost
-
-    full_mask = (1 << point_count) - 1
-    best_last_index = -1
-    best_cost = math.inf
-    for last_index in range(point_count):
-        return_edge = _ground_edge_time(ground_time, ordered_points[last_index], start)
-        if return_edge is None:
-            continue
-        candidate_cost = dp(full_mask, last_index) + return_edge
-        if candidate_cost < best_cost:
-            best_cost = candidate_cost
-            best_last_index = last_index
-
-    if best_last_index < 0 or not math.isfinite(best_cost):
-        raise RuntimeError(f"No finite exact ground-review tour found for points {sorted(ordered_points)}")
-
-    route_indices = [best_last_index]
-    mask = full_mask
-    last_index = best_last_index
-    while mask != (1 << last_index):
-        previous_mask = mask ^ (1 << last_index)
-        previous_choice = -1
-        for previous_index in range(point_count):
-            if not (previous_mask & (1 << previous_index)):
-                continue
-            transition = _ground_edge_time(ground_time, ordered_points[previous_index], ordered_points[last_index])
-            if transition is None:
-                continue
-            if abs(dp(mask, last_index) - (dp(previous_mask, previous_index) + transition)) <= 1e-9:
-                previous_choice = previous_index
-                break
-        if previous_choice < 0:
-            raise RuntimeError("Failed to reconstruct exact ground-review route")
-        route_indices.append(previous_choice)
-        mask = previous_mask
-        last_index = previous_choice
-
-    route_indices.reverse()
-    route = [start, *(ordered_points[index] for index in route_indices), start]
-    return route, best_cost
+def _ground_stage_metrics(manual_points: pd.DataFrame, manual_point_ids: list[str], ground_time: pd.DataFrame) -> tuple[float, float, float, list[str]]:
+    if not manual_point_ids:
+        return 0.0, 0.0, 0.0, [MANUAL_DEPOT_ID, MANUAL_DEPOT_ID]
+    path = _ground_path(manual_point_ids, ground_time)
+    travel_time_s = _ground_travel_time(path, ground_time)
+    service_time_s = float(
+        manual_points.loc[manual_points["manual_point_id"].isin(manual_point_ids), "manual_service_time_s"].sum()
+    )
+    return travel_time_s + service_time_s, travel_time_s, service_time_s, path
 
 
-def optimize_ground_review_path(
-    ground_time: pd.DataFrame,
-    points: list[str],
-    start: str = DEPOT_MANUAL_ID,
-    method: str = "two_opt",
-) -> tuple[list[str], float]:
-    unique_points = [point for point in dict.fromkeys(points) if point != start]
-    if not unique_points:
-        return [start, start], 0.0
-    if method == "nearest":
-        return _nearest_neighbor_path(ground_time, unique_points, start=start)
-    if method == "two_opt":
-        return _two_opt_path(ground_time, unique_points, start=start)
-    if method == "exact":
-        return _exact_tsp_path(ground_time, unique_points, start=start)
-    raise ValueError(f"Unsupported ground-review route method: {method}")
+def optimize_ground_review_path(ground_time: pd.DataFrame, manual_point_ids: list[str], method: str = "two_opt") -> tuple[list[str], float]:
+    del method
+    path = _ground_path([str(point_id) for point_id in manual_point_ids], ground_time)
+    return path, _ground_travel_time(path, ground_time)
 
 
-def _route_travel_savings(ground_time: pd.DataFrame, route: list[str]) -> dict[str, float]:
+def _route_travel_savings(ground_time: pd.DataFrame, manual_route: list[str]) -> dict[str, float]:
     savings: dict[str, float] = {}
-    if len(route) <= 2:
+    if len(manual_route) <= 2:
         return savings
-
-    for idx in range(1, len(route) - 1):
-        current = route[idx]
-        previous = route[idx - 1]
-        following = route[idx + 1]
-        savings[current] = (
-            float(ground_time.loc[previous, current])
-            + float(ground_time.loc[current, following])
-            - float(ground_time.loc[previous, following])
-        )
+    for left, current, right in zip(manual_route, manual_route[1:], manual_route[2:], strict=False):
+        if current == MANUAL_DEPOT_ID:
+            continue
+        savings[str(current)] = _metric(ground_time, left, current) + _metric(ground_time, current, right) - _metric(ground_time, left, right)
     return savings
 
 
-def _build_node_state(problem1_detail: pd.DataFrame, nodes: pd.DataFrame) -> pd.DataFrame:
-    node_hover = (
-        problem1_detail.groupby("node_id", as_index=False)["hover_time_s"]
-        .sum()
-        .rename(columns={"hover_time_s": "allocated_hover_time_s"})
-    )
-    assignment = problem1_detail.drop_duplicates(subset=["node_id"])[
-        ["node_id", "drone_id", "route_id", "route_duration_s", "route_energy_j", "drone_total_time_s"]
-    ].copy()
-
-    node_state = nodes.loc[nodes["node_id"] != 0].copy()
-    node_state = node_state.merge(node_hover, on="node_id", how="left")
-    node_state = node_state.merge(assignment, on="node_id", how="left")
-    node_state["allocated_hover_time_s"] = node_state["allocated_hover_time_s"].fillna(0.0)
-    node_state["extra_hover_added_s"] = 0.0
-    node_state["direct_confirmed"] = node_state["allocated_hover_time_s"] >= node_state["direct_confirm_time_s"]
-    node_state["confirmed_by_extra_hover"] = False
-    return node_state
-
-
 def _build_manual_review_table(node_state: pd.DataFrame, manual_points: pd.DataFrame) -> pd.DataFrame:
-    manual_candidates = manual_points.loc[manual_points["mapped_target_id"] != 0].copy()
-    manual_candidates["mapped_target_id"] = manual_candidates["mapped_target_id"].astype("Int64")
-
-    pending_nodes = node_state.loc[
-        ~node_state["direct_confirmed"],
-        ["node_id", "node_name", "priority_weight", "allocated_hover_time_s", "direct_confirm_time_s"],
-    ].copy()
-    pending_nodes["node_id"] = pending_nodes["node_id"].astype("Int64")
-    pending_manual = pending_nodes.merge(
-        manual_candidates,
-        left_on="node_id",
-        right_on="mapped_target_id",
-        how="left",
-    )
-    missing_manual = pending_manual.loc[pending_manual["manual_point_id"].isna(), "node_id"].tolist()
-    if missing_manual:
-        raise RuntimeError(f"Missing manual point mapping for nodes: {missing_manual}")
-    return pending_manual
+    del manual_points
+    pending = node_state.loc[~node_state["direct_confirmed"]].copy()
+    return pending[["node_id", "node_name", "manual_point_id", "manual_service_time_s"]].reset_index(drop=True)
 
 
 def _summarize_node_state(
@@ -240,291 +226,547 @@ def _summarize_node_state(
     ground_time: pd.DataFrame,
     drone_count: int,
     solution_type: str,
-    selected_nodes: list[str] | None = None,
-    ground_route_method: str = "two_opt",
+    selected_nodes: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    pending_manual = _build_manual_review_table(node_state, manual_points)
-    manual_point_ids = pending_manual["manual_point_id"].astype(str).tolist()
-    manual_route, ground_travel_time = optimize_ground_review_path(
-        ground_time,
+    detail = node_state.copy().reset_index(drop=True)
+    detail["solution_type"] = solution_type
+    detail["selected_by_guidance"] = detail["node_id"].astype(str).isin(set(str(node_id) for node_id in selected_nodes))
+
+    manual_point_ids = detail.loc[~detail["direct_confirmed"], "manual_point_id"].dropna().astype(str).tolist()
+    ground_stage_time_s, ground_travel_time_s, ground_service_time_s, ground_path = _ground_stage_metrics(
+        manual_points,
         manual_point_ids,
-        method=ground_route_method,
+        ground_time,
     )
-    ground_service_time = float(pending_manual["manual_service_time_s"].fillna(0.0).sum())
-    ground_completion_time = ground_travel_time + ground_service_time
-
-    air_completion_time = float(node_state["drone_total_time_s"].max())
-    direct_confirm_count = int(node_state["direct_confirmed"].sum())
-    manual_review_count = int((~node_state["direct_confirmed"]).sum())
-    target_count = int(len(node_state))
-    total_added_hover = float(node_state["extra_hover_added_s"].sum())
-
-    joint_summary = pd.DataFrame(
+    air_completion_time_s = float(detail[["drone_id", "drone_total_time_s"]].drop_duplicates()["drone_total_time_s"].max()) if not detail.empty else 0.0
+    route_energy_table = detail[["drone_id", "route_id", "route_energy_j"]].drop_duplicates()
+    total_air_energy_j = float(route_energy_table["route_energy_j"].sum()) if not route_energy_table.empty else 0.0
+    total_hover_time_s = float(detail["allocated_hover_time_s"].sum()) if not detail.empty else 0.0
+    base_hover_sum = float(pd.to_numeric(detail["base_hover_time_s"], errors="coerce").fillna(0.0).sum()) if "base_hover_time_s" in detail.columns else total_hover_time_s
+    direct_confirm_count = int(detail["direct_confirmed"].sum()) if not detail.empty else 0
+    summary = pd.DataFrame(
         [
             {
                 "drone_count": drone_count,
                 "solution_type": solution_type,
-                "air_completion_time_s": air_completion_time,
-                "ground_travel_time_s": ground_travel_time,
-                "ground_service_time_s": ground_service_time,
-                "ground_completion_time_s": ground_completion_time,
-                "total_closed_loop_time_s": air_completion_time + ground_completion_time,
+                "air_completion_time_s": air_completion_time_s,
+                "ground_completion_time_s": ground_stage_time_s,
+                "ground_travel_time_s": ground_travel_time_s,
+                "ground_service_time_s": ground_service_time_s,
+                "total_closed_loop_time_s": air_completion_time_s + ground_stage_time_s,
                 "direct_confirm_count": direct_confirm_count,
-                "direct_confirm_ratio": direct_confirm_count / target_count if target_count else 0.0,
-                "manual_review_count": manual_review_count,
-                "added_hover_time_s": total_added_hover,
-                "selected_direct_confirm_nodes": ",".join(selected_nodes or []),
-                "manual_route": "-".join(manual_route),
-                "ground_route_method": ground_route_method,
+                "direct_confirm_ratio": direct_confirm_count / len(detail) if len(detail) else 0.0,
+                "manual_review_count": int((~detail["direct_confirmed"]).sum()) if not detail.empty else 0,
+                "extra_hover_time_s": total_hover_time_s - base_hover_sum,
+                "total_hover_time_s": total_hover_time_s,
+                "total_air_energy_j": total_air_energy_j,
+                "confirmed_priority_weight": float(detail.loc[detail["direct_confirmed"], "priority_weight"].sum()) if not detail.empty else 0.0,
+                "selected_direct_confirm_nodes": ",".join(str(node_id) for node_id in sorted(detail.loc[detail["direct_confirmed"], "node_id"].astype(int).tolist())),
+                "manual_route": "-".join(ground_path),
             }
         ]
     )
-
-    node_state = node_state.assign(
-        drone_count=drone_count,
-        solution_type=solution_type,
-        manual_route="-".join(manual_route),
-    )
-    detail_columns = [
-        "drone_count",
-        "solution_type",
-        "node_id",
-        "node_name",
-        "priority_weight",
-        "allocated_hover_time_s",
-        "extra_hover_added_s",
-        "direct_confirm_time_s",
-        "drone_id",
-        "route_id",
-        "manual_point_id",
-        "manual_service_time_s",
-        "direct_confirmed",
-        "confirmed_by_extra_hover",
-        "manual_route",
-    ]
-    joint_detail = node_state[detail_columns].copy()
-    return joint_summary, joint_detail
+    return summary, detail
 
 
-def evaluate_selected_nodes(
-    node_state: pd.DataFrame,
-    manual_points: pd.DataFrame,
-    ground_time: pd.DataFrame,
-    drone_count: int,
-    selected_node_ids: list[int],
-    horizon: float,
-    energy_limit: float,
+def _route_metrics(
+    stops: list[int],
+    hover_times_s: dict[int, float],
+    flight_time: pd.DataFrame,
+    flight_energy: pd.DataFrame,
     hover_power: float,
-    solution_type: str,
-) -> tuple[pd.DataFrame, pd.DataFrame, bool]:
-    node_state = node_state.copy()
-    route_energy = {
-        (int(row.drone_id), int(row.route_id)): float(row.route_energy_j)
-        for row in node_state[["drone_id", "route_id", "route_energy_j"]].drop_duplicates().itertuples(index=False)
-    }
-    drone_total = {
-        int(row.drone_id): float(row.drone_total_time_s)
-        for row in node_state[["drone_id", "drone_total_time_s"]].drop_duplicates().itertuples(index=False)
-    }
+) -> tuple[float, float] | None:
+    if not stops:
+        return 0.0, 0.0
 
-    selected_node_ids = sorted(set(selected_node_ids))
-    for node_id in selected_node_ids:
-        node_mask = node_state["node_id"] == node_id
-        if not node_mask.any():
-            return pd.DataFrame(), pd.DataFrame(), False
-        node_row = node_state.loc[node_mask].iloc[0]
-        extra_hover_needed = max(0.0, float(node_row.direct_confirm_time_s - node_row.allocated_hover_time_s))
-        if extra_hover_needed <= 0:
-            continue
+    route_nodes = [DEPOT_ID, *stops, DEPOT_ID]
+    total_flight_time_s = 0.0
+    total_flight_energy_j = 0.0
+    for from_id, to_id in zip(route_nodes, route_nodes[1:], strict=False):
+        total_flight_time_s += _metric(flight_time, from_id, to_id)
+        total_flight_energy_j += _metric(flight_energy, from_id, to_id)
 
-        route_key = (int(node_row.drone_id), int(node_row.route_id))
-        drone_key = int(node_row.drone_id)
-        new_route_energy = route_energy[route_key] + extra_hover_needed * hover_power
-        new_drone_total = drone_total[drone_key] + extra_hover_needed
-        if new_route_energy > energy_limit or new_drone_total > horizon:
-            return pd.DataFrame(), pd.DataFrame(), False
-
-        route_energy[route_key] = new_route_energy
-        drone_total[drone_key] = new_drone_total
-        node_state.loc[node_mask, "allocated_hover_time_s"] += extra_hover_needed
-        node_state.loc[node_mask, "extra_hover_added_s"] += extra_hover_needed
-        node_state.loc[node_mask, "direct_confirmed"] = True
-        node_state.loc[node_mask, "confirmed_by_extra_hover"] = True
-
-    for drone_id, total_time in drone_total.items():
-        node_state.loc[node_state["drone_id"] == drone_id, "drone_total_time_s"] = total_time
-    for (drone_id, route_id), total_energy in route_energy.items():
-        node_state.loc[(node_state["drone_id"] == drone_id) & (node_state["route_id"] == route_id), "route_energy_j"] = total_energy
-
-    summary, detail = _summarize_node_state(
-        node_state=node_state,
-        manual_points=manual_points,
-        ground_time=ground_time,
-        drone_count=drone_count,
-        solution_type=solution_type,
-        selected_nodes=[str(node_id) for node_id in selected_node_ids],
-        ground_route_method="two_opt",
-    )
-    return summary, detail, True
+    total_hover_time_s = sum(float(hover_times_s[node_id]) for node_id in stops)
+    total_duration_s = total_flight_time_s + total_hover_time_s
+    total_energy_j = total_flight_energy_j + total_hover_time_s * hover_power
+    return total_duration_s, total_energy_j
 
 
-def _greedy_extra_hover(
-    node_state: pd.DataFrame,
-    manual_points: pd.DataFrame,
-    ground_time: pd.DataFrame,
-    horizon: float,
-    energy_limit: float,
+def _swap_route_state(route: RouteState, old_node_id: int, new_node_id: int, new_hover_time_s: float) -> tuple[list[int], dict[int, float]]:
+    swapped_stops = route.stops.copy()
+    swapped_stops[swapped_stops.index(old_node_id)] = new_node_id
+    swapped_hover_times_s = route.hover_times_s.copy()
+    swapped_hover_times_s.pop(old_node_id)
+    swapped_hover_times_s[new_node_id] = new_hover_time_s
+    return swapped_stops, swapped_hover_times_s
+
+
+def _evaluate_swap_action(
+    left_drone: DroneState,
+    left_route: RouteState,
+    left_node_id: int,
+    right_drone: DroneState,
+    right_route: RouteState,
+    right_node_id: int,
     hover_power: float,
-) -> tuple[pd.DataFrame, list[dict[str, float | int | str]]]:
-    node_state = node_state.copy()
-    route_energy = {
-        (int(row.drone_id), int(row.route_id)): float(row.route_energy_j)
-        for row in node_state[["drone_id", "route_id", "route_energy_j"]].drop_duplicates().itertuples(index=False)
-    }
-    drone_total = {
-        int(row.drone_id): float(row.drone_total_time_s)
-        for row in node_state[["drone_id", "drone_total_time_s"]].drop_duplicates().itertuples(index=False)
-    }
-    current_air_completion = max(drone_total.values()) if drone_total else 0.0
-    selected_records: list[dict[str, float | int | str]] = []
+    energy_limit: float,
+    horizon: float,
+    ground_stage_time_s: float,
+    current_closed_loop_s: float,
+    drone_states: dict[int, DroneState],
+    flight_time: pd.DataFrame,
+    flight_energy: pd.DataFrame,
+) -> SwapCandidate | None:
+    left_stops, left_hover_times_s = _swap_route_state(
+        left_route,
+        left_node_id,
+        right_node_id,
+        right_route.hover_times_s[right_node_id],
+    )
+    right_stops, right_hover_times_s = _swap_route_state(
+        right_route,
+        right_node_id,
+        left_node_id,
+        left_route.hover_times_s[left_node_id],
+    )
+    left_metrics = _route_metrics(left_stops, left_hover_times_s, flight_time, flight_energy, hover_power)
+    right_metrics = _route_metrics(right_stops, right_hover_times_s, flight_time, flight_energy, hover_power)
+    if left_metrics is None or right_metrics is None:
+        return None
+
+    left_route_duration_s, left_route_energy_j = left_metrics
+    right_route_duration_s, right_route_energy_j = right_metrics
+    if left_route_energy_j > energy_limit or right_route_energy_j > energy_limit:
+        return None
+
+    drone_totals = {drone_id: state.total_time_s for drone_id, state in drone_states.items()}
+    drone_totals[left_drone.drone_id] += left_route_duration_s - left_route.duration_s
+    drone_totals[right_drone.drone_id] += right_route_duration_s - right_route.duration_s
+
+    if drone_totals[left_drone.drone_id] > horizon or drone_totals[right_drone.drone_id] > horizon:
+        return None
+
+    new_air_makespan_s = max(drone_totals.values())
+    new_closed_loop_s = new_air_makespan_s + ground_stage_time_s
+    improvement_s = current_closed_loop_s - new_closed_loop_s
+    if improvement_s <= 1e-9:
+        return None
+
+    return SwapCandidate(
+        left_drone_id=left_drone.drone_id,
+        left_route_id=left_route.route_id,
+        left_node_id=left_node_id,
+        right_drone_id=right_drone.drone_id,
+        right_route_id=right_route.route_id,
+        right_node_id=right_node_id,
+        left_route_stops=left_stops,
+        right_route_stops=right_stops,
+        left_hover_times_s=left_hover_times_s,
+        right_hover_times_s=right_hover_times_s,
+        left_route_duration_s=left_route_duration_s,
+        left_route_energy_j=left_route_energy_j,
+        right_route_duration_s=right_route_duration_s,
+        right_route_energy_j=right_route_energy_j,
+        new_closed_loop_s=new_closed_loop_s,
+        improvement_s=improvement_s,
+    )
+
+
+def _apply_swap_action(swap: SwapCandidate, drone_states: dict[int, DroneState]) -> None:
+    left_drone = drone_states[swap.left_drone_id]
+    right_drone = drone_states[swap.right_drone_id]
+    left_route = next(route for route in left_drone.routes if route.route_id == swap.left_route_id)
+    right_route = next(route for route in right_drone.routes if route.route_id == swap.right_route_id)
+
+    left_drone.total_time_s += swap.left_route_duration_s - left_route.duration_s
+    right_drone.total_time_s += swap.right_route_duration_s - right_route.duration_s
+
+    left_route.stops = swap.left_route_stops
+    left_route.hover_times_s = swap.left_hover_times_s
+    left_route.duration_s = swap.left_route_duration_s
+    left_route.energy_j = swap.left_route_energy_j
+
+    right_route.stops = swap.right_route_stops
+    right_route.hover_times_s = swap.right_hover_times_s
+    right_route.duration_s = swap.right_route_duration_s
+    right_route.energy_j = swap.right_route_energy_j
+
+
+def _swap_local_search(
+    drone_states: dict[int, DroneState],
+    hover_power: float,
+    energy_limit: float,
+    horizon: float,
+    ground_stage_time_s: float,
+    flight_time: pd.DataFrame,
+    flight_energy: pd.DataFrame,
+) -> tuple[int, float]:
+    accepted_swap_count = 0
+    total_improvement_s = 0.0
 
     while True:
-        pending_manual = _build_manual_review_table(node_state, manual_points)
-        manual_point_ids = pending_manual["manual_point_id"].astype(str).tolist()
-        manual_route, _ = optimize_ground_review_path(ground_time, manual_point_ids, method="two_opt")
-        travel_savings = _route_travel_savings(ground_time, manual_route)
-        service_times = pending_manual.set_index("manual_point_id")["manual_service_time_s"].to_dict()
+        current_air_makespan_s = max(state.total_time_s for state in drone_states.values())
+        current_closed_loop_s = current_air_makespan_s + ground_stage_time_s
+        route_pairs = [(drone_state, route) for drone_state in drone_states.values() for route in drone_state.routes]
+        best_swap: SwapCandidate | None = None
 
-        best_choice: dict[str, float | int | str] | None = None
-        for row in pending_manual.itertuples(index=False):
-            node_row = node_state.loc[node_state["node_id"] == row.node_id].iloc[0]
-            additional_hover_needed = float(node_row.direct_confirm_time_s - node_row.allocated_hover_time_s)
-            if additional_hover_needed <= 0:
-                continue
+        for left_index, (left_drone, left_route) in enumerate(route_pairs):
+            for right_drone, right_route in route_pairs[left_index + 1 :]:
+                for left_node_id in left_route.stops:
+                    for right_node_id in right_route.stops:
+                        candidate = _evaluate_swap_action(
+                            left_drone,
+                            left_route,
+                            left_node_id,
+                            right_drone,
+                            right_route,
+                            right_node_id,
+                            hover_power,
+                            energy_limit,
+                            horizon,
+                            ground_stage_time_s,
+                            current_closed_loop_s,
+                            drone_states,
+                            flight_time,
+                            flight_energy,
+                        )
+                        if candidate is not None and (
+                            best_swap is None
+                            or (candidate.improvement_s, -candidate.new_closed_loop_s)
+                            > (best_swap.improvement_s, -best_swap.new_closed_loop_s)
+                        ):
+                            best_swap = candidate
 
-            route_key = (int(node_row.drone_id), int(node_row.route_id))
-            drone_key = int(node_row.drone_id)
-            new_route_energy = route_energy[route_key] + additional_hover_needed * hover_power
-            new_drone_total = drone_total[drone_key] + additional_hover_needed
-            if new_route_energy > energy_limit or new_drone_total > horizon:
-                continue
-
-            new_air_completion = max(current_air_completion, new_drone_total)
-            air_delta = new_air_completion - current_air_completion
-            ground_saving = float(service_times[str(row.manual_point_id)]) + float(travel_savings.get(str(row.manual_point_id), 0.0))
-            total_improvement = ground_saving - air_delta
-            score = total_improvement / additional_hover_needed
-
-            candidate = {
-                "node_id": int(row.node_id),
-                "node_name": str(row.node_name),
-                "manual_point_id": str(row.manual_point_id),
-                "priority_weight": float(node_row.priority_weight),
-                "additional_hover_needed_s": additional_hover_needed,
-                "ground_saving_s": ground_saving,
-                "air_delta_s": air_delta,
-                "total_improvement_s": total_improvement,
-                "score": score,
-                "drone_id": drone_key,
-                "route_id": int(node_row.route_id),
-            }
-            if best_choice is None or (
-                candidate["total_improvement_s"],
-                candidate["score"],
-                candidate["priority_weight"],
-            ) > (
-                best_choice["total_improvement_s"],
-                best_choice["score"],
-                best_choice["priority_weight"],
-            ):
-                best_choice = candidate
-
-        if best_choice is None or float(best_choice["total_improvement_s"]) <= 0:
+        if best_swap is None:
             break
 
-        node_id = int(best_choice["node_id"])
-        drone_id = int(best_choice["drone_id"])
-        route_id = int(best_choice["route_id"])
-        gap = float(best_choice["additional_hover_needed_s"])
-        route_key = (drone_id, route_id)
+        _apply_swap_action(best_swap, drone_states)
+        accepted_swap_count += 1
+        total_improvement_s += best_swap.improvement_s
 
-        node_state.loc[node_state["node_id"] == node_id, "allocated_hover_time_s"] += gap
-        node_state.loc[node_state["node_id"] == node_id, "extra_hover_added_s"] += gap
-        node_state.loc[node_state["node_id"] == node_id, "direct_confirmed"] = True
-        node_state.loc[node_state["node_id"] == node_id, "confirmed_by_extra_hover"] = True
-
-        route_energy[route_key] += gap * hover_power
-        drone_total[drone_id] += gap
-        current_air_completion = max(current_air_completion, drone_total[drone_id])
-
-        node_state.loc[node_state["drone_id"] == drone_id, "drone_total_time_s"] = drone_total[drone_id]
-        node_state.loc[(node_state["drone_id"] == drone_id) & (node_state["route_id"] == route_id), "route_energy_j"] = route_energy[route_key]
-        selected_records.append(best_choice)
-
-    return node_state, selected_records
+    return accepted_swap_count, total_improvement_s
 
 
-def evaluate_joint_solution(drone_count: int, optimize_hover: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _evaluate_existing_route_action(
+    node_id: int,
+    hover_gap_s: float,
+    drone_state: DroneState,
+    route: RouteState,
+    hover_power: float,
+    energy_limit: float,
+    horizon: float,
+    new_ground_time_s: float,
+    current_closed_loop_s: float,
+    drone_states: dict[int, DroneState],
+) -> CandidateAction | None:
+    added_energy_j = hover_gap_s * hover_power
+    route_energy_j = route.energy_j + added_energy_j
+    if route_energy_j > energy_limit:
+        return None
+
+    projected_drone_time_s = drone_state.total_time_s + hover_gap_s
+    if projected_drone_time_s > horizon:
+        return None
+
+    other_times = [state.total_time_s for state in drone_states.values() if state.drone_id != drone_state.drone_id]
+    new_air_makespan_s = max([projected_drone_time_s, *other_times]) if other_times else projected_drone_time_s
+    new_closed_loop_s = new_air_makespan_s + new_ground_time_s
+    improvement_s = current_closed_loop_s - new_closed_loop_s
+    if improvement_s <= 1e-9:
+        return None
+
+    return CandidateAction(
+        node_id=node_id,
+        action_type="extend_existing",
+        drone_id=drone_state.drone_id,
+        route_id=route.route_id,
+        added_air_time_s=hover_gap_s,
+        added_energy_j=added_energy_j,
+        route_duration_s=route.duration_s + hover_gap_s,
+        route_energy_j=route_energy_j,
+        new_closed_loop_s=new_closed_loop_s,
+        improvement_s=improvement_s,
+    )
+
+
+def _evaluate_new_route_action(
+    node_id: int,
+    hover_gap_s: float,
+    drone_state: DroneState,
+    hover_power: float,
+    battery_swap_time_s: float,
+    energy_limit: float,
+    horizon: float,
+    flight_time: pd.DataFrame,
+    flight_energy: pd.DataFrame,
+    new_ground_time_s: float,
+    current_closed_loop_s: float,
+    drone_states: dict[int, DroneState],
+) -> CandidateAction | None:
+    flight_time_s = _metric(flight_time, DEPOT_ID, node_id) + _metric(flight_time, node_id, DEPOT_ID)
+    flight_energy_j = _metric(flight_energy, DEPOT_ID, node_id) + _metric(flight_energy, node_id, DEPOT_ID)
+    route_energy_j = flight_energy_j + hover_gap_s * hover_power
+    if route_energy_j > energy_limit:
+        return None
+
+    added_air_time_s = flight_time_s + hover_gap_s + (battery_swap_time_s if drone_state.routes else 0.0)
+    projected_drone_time_s = drone_state.total_time_s + added_air_time_s
+    if projected_drone_time_s > horizon:
+        return None
+
+    other_times = [state.total_time_s for state in drone_states.values() if state.drone_id != drone_state.drone_id]
+    new_air_makespan_s = max([projected_drone_time_s, *other_times]) if other_times else projected_drone_time_s
+    new_closed_loop_s = new_air_makespan_s + new_ground_time_s
+    improvement_s = current_closed_loop_s - new_closed_loop_s
+    if improvement_s <= 1e-9:
+        return None
+
+    return CandidateAction(
+        node_id=node_id,
+        action_type="new_route",
+        drone_id=drone_state.drone_id,
+        route_id=None,
+        added_air_time_s=added_air_time_s,
+        added_energy_j=route_energy_j,
+        route_duration_s=flight_time_s + hover_gap_s,
+        route_energy_j=route_energy_j,
+        new_closed_loop_s=new_closed_loop_s,
+        improvement_s=improvement_s,
+    )
+
+
+def _apply_action(action: CandidateAction, drone_states: dict[int, DroneState], hover_gap_s: float) -> None:
+    drone_state = drone_states[action.drone_id]
+    if action.action_type == "extend_existing":
+        for route in drone_state.routes:
+            if route.route_id == action.route_id:
+                route.hover_times_s[action.node_id] += hover_gap_s
+                route.duration_s = action.route_duration_s
+                route.energy_j = action.route_energy_j
+                drone_state.total_time_s += action.added_air_time_s
+                return
+        raise RuntimeError(f"Route {action.route_id} not found for drone {action.drone_id}.")
+
+    next_route_id = max(route.route_id for state in drone_states.values() for route in state.routes) + 1
+    drone_state.routes.append(
+        RouteState(
+            drone_id=action.drone_id,
+            route_id=next_route_id,
+            route_order=len(drone_state.routes) + 1,
+            stops=[action.node_id],
+            hover_times_s={action.node_id: hover_gap_s},
+            duration_s=action.route_duration_s,
+            energy_j=action.route_energy_j,
+            mode="confirm_revisit",
+        )
+    )
+    drone_state.total_time_s += action.added_air_time_s
+
+
+def solve_problem2(threshold_multiplier: float = 1.0, enable_swap: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     data = load_c_problem_data(WORKBOOK_PATH)
-    problem1_summary, problem1_detail = solve_for_drone_count(drone_count)
+    summary_df, detail_df = _load_problem1_solution()
+    target_df = _build_target_table(data, threshold_multiplier=threshold_multiplier)
+    base_hover_sum = float(target_df["base_hover_time_s"].sum())
 
-    energy_limit = float(parameter_value(data.params, "effective_energy_limit_J"))
     hover_power = float(parameter_value(data.params, "hover_power_J_per_s"))
+    energy_limit = float(parameter_value(data.params, "effective_energy_limit_J"))
     horizon = float(parameter_value(data.params, "operating_horizon_s"))
+    battery_swap_time_s = float(parameter_value(data.params, "battery_swap_time_s"))
 
-    node_state = _build_node_state(problem1_detail, data.nodes)
-    selected_records: list[dict[str, float | int | str]] = []
-    if optimize_hover:
-        node_state, selected_records = _greedy_extra_hover(
-            node_state=node_state,
-            manual_points=data.manual_points,
-            ground_time=data.ground_time,
-            horizon=horizon,
-            energy_limit=energy_limit,
-            hover_power=hover_power,
+    summary_rows: list[dict[str, float | int | str | bool]] = []
+    target_rows: list[dict[str, float | int | str | bool]] = []
+    route_rows: list[dict[str, float | int | str]] = []
+
+    for drone_count in sorted(summary_df["drone_count"].unique()):
+        drone_states = _build_drone_states(detail_df, int(drone_count))
+        current_hover = {
+            int(node_id): float(hover_time)
+            for node_id, hover_time in target_df[["node_id", "base_hover_time_s"]].itertuples(index=False)
+        }
+        confirmed_nodes: set[int] = set()
+
+        while True:
+            remaining_nodes = sorted(set(int(node_id) for node_id in target_df["node_id"]) - confirmed_nodes)
+            remaining_manual_points = target_df.loc[
+                target_df["node_id"].isin(remaining_nodes), "manual_point_id"
+            ].dropna().astype(str).tolist()
+            current_ground_time_s, _, _, _ = _ground_stage_metrics(data.manual_points, remaining_manual_points, data.ground_time)
+            current_air_makespan_s = max(state.total_time_s for state in drone_states.values())
+            current_closed_loop_s = current_air_makespan_s + current_ground_time_s
+            best_action: CandidateAction | None = None
+
+            for row in target_df.itertuples(index=False):
+                node_id = int(row.node_id)
+                if node_id in confirmed_nodes:
+                    continue
+                hover_gap_s = float(row.direct_confirm_time_s) - float(current_hover[node_id])
+                if hover_gap_s <= 1e-9:
+                    confirmed_nodes.add(node_id)
+                    continue
+
+                new_manual_points = [point_id for point_id in remaining_manual_points if point_id != str(row.manual_point_id)]
+                new_ground_time_s, _, _, _ = _ground_stage_metrics(data.manual_points, new_manual_points, data.ground_time)
+
+                located = _route_for_node(drone_states, node_id)
+                if located is not None:
+                    drone_state, route = located
+                    candidate = _evaluate_existing_route_action(
+                        node_id,
+                        hover_gap_s,
+                        drone_state,
+                        route,
+                        hover_power,
+                        energy_limit,
+                        horizon,
+                        new_ground_time_s,
+                        current_closed_loop_s,
+                        drone_states,
+                    )
+                    if candidate is not None and (best_action is None or (candidate.improvement_s, -candidate.added_air_time_s) > (best_action.improvement_s, -best_action.added_air_time_s)):
+                        best_action = candidate
+
+                for drone_state in drone_states.values():
+                    candidate = _evaluate_new_route_action(
+                        node_id,
+                        hover_gap_s,
+                        drone_state,
+                        hover_power,
+                        battery_swap_time_s,
+                        energy_limit,
+                        horizon,
+                        data.flight_time,
+                        data.flight_energy,
+                        new_ground_time_s,
+                        current_closed_loop_s,
+                        drone_states,
+                    )
+                    if candidate is not None and (best_action is None or (candidate.improvement_s, -candidate.added_air_time_s) > (best_action.improvement_s, -best_action.added_air_time_s)):
+                        best_action = candidate
+
+            if best_action is None:
+                break
+
+            row = target_df.loc[target_df["node_id"] == best_action.node_id].iloc[0]
+            hover_gap_s = float(row["direct_confirm_time_s"]) - float(current_hover[best_action.node_id])
+            _apply_action(best_action, drone_states, hover_gap_s)
+            current_hover[best_action.node_id] = float(row["direct_confirm_time_s"])
+            confirmed_nodes.add(best_action.node_id)
+
+        manual_nodes = sorted(set(int(node_id) for node_id in target_df["node_id"]) - confirmed_nodes)
+        manual_point_ids = target_df.loc[target_df["node_id"].isin(manual_nodes), "manual_point_id"].dropna().astype(str).tolist()
+        ground_stage_time_s, ground_travel_time_s, ground_service_time_s, ground_path = _ground_stage_metrics(
+            data.manual_points,
+            manual_point_ids,
+            data.ground_time,
+        )
+        swap_move_count = 0
+        swap_improvement_s = 0.0
+        if enable_swap:
+            swap_move_count, swap_improvement_s = _swap_local_search(
+                drone_states,
+                hover_power,
+                energy_limit,
+                horizon,
+                ground_stage_time_s,
+                data.flight_time,
+                data.flight_energy,
+            )
+        air_stage_time_s = max(state.total_time_s for state in drone_states.values())
+        closed_loop_time_s = air_stage_time_s + ground_stage_time_s
+        total_hover_time_s = sum(sum(route.hover_times_s.values()) for state in drone_states.values() for route in state.routes)
+        total_air_energy_j = sum(route.energy_j for state in drone_states.values() for route in state.routes)
+
+        summary_rows.append(
+            {
+                "threshold_multiplier": threshold_multiplier,
+                "swap_enabled": enable_swap,
+                "drone_count": int(drone_count),
+                "air_stage_time_s": air_stage_time_s,
+                "air_stage_time_min": air_stage_time_s / 60.0,
+                "ground_stage_time_s": ground_stage_time_s,
+                "ground_travel_time_s": ground_travel_time_s,
+                "ground_service_time_s": ground_service_time_s,
+                "closed_loop_time_s": closed_loop_time_s,
+                "closed_loop_time_min": closed_loop_time_s / 60.0,
+                "direct_confirm_count": len(confirmed_nodes),
+                "direct_confirm_ratio": len(confirmed_nodes) / len(target_df),
+                "manual_review_count": len(manual_nodes),
+                "extra_hover_time_s": total_hover_time_s - base_hover_sum,
+                "total_hover_time_s": total_hover_time_s,
+                "total_air_energy_j": total_air_energy_j,
+                "confirmed_priority_weight": float(target_df.loc[target_df["node_id"].isin(confirmed_nodes), "priority_weight"].sum()),
+                "swap_move_count": swap_move_count,
+                "swap_improvement_s": swap_improvement_s,
+                "ground_path": "-".join(ground_path),
+                "feasible_within_horizon": air_stage_time_s <= horizon,
+            }
         )
 
-    joint_summary, joint_detail = _summarize_node_state(
-        node_state=node_state,
-        manual_points=data.manual_points,
-        ground_time=data.ground_time,
-        drone_count=drone_count,
-        solution_type="optimize_hover" if optimize_hover else "baseline",
-        selected_nodes=[str(record["node_id"]) for record in selected_records],
-    )
-    return joint_summary, joint_detail
+        for row in target_df.itertuples(index=False):
+            node_id = int(row.node_id)
+            target_rows.append(
+                {
+                    "threshold_multiplier": threshold_multiplier,
+                    "swap_enabled": enable_swap,
+                    "drone_count": int(drone_count),
+                    "node_id": node_id,
+                    "node_name": row.node_name,
+                    "priority_weight": float(row.priority_weight),
+                    "base_hover_time_s": float(row.base_hover_time_s),
+                    "direct_confirm_time_s": float(row.direct_confirm_time_s),
+                    "final_hover_time_s": float(current_hover[node_id]),
+                    "extra_hover_time_s": float(current_hover[node_id]) - float(row.base_hover_time_s),
+                    "is_direct_confirmed": node_id in confirmed_nodes,
+                    "manual_point_id": str(row.manual_point_id),
+                    "manual_service_time_s": float(row.manual_service_time_s),
+                }
+            )
+
+        for drone_state in drone_states.values():
+            for route in drone_state.routes:
+                route_rows.append(
+                    {
+                        "threshold_multiplier": threshold_multiplier,
+                        "swap_enabled": enable_swap,
+                        "drone_count": int(drone_count),
+                        "drone_id": drone_state.drone_id,
+                        "route_id": route.route_id,
+                        "route_order": route.route_order,
+                        "route_mode": route.mode,
+                        "route_path": "0-" + "-".join(str(stop) for stop in route.stops) + "-0",
+                        "route_duration_s": route.duration_s,
+                        "route_energy_j": route.energy_j,
+                        "drone_total_time_s": drone_state.total_time_s,
+                    }
+                )
+
+    return pd.DataFrame(summary_rows), pd.DataFrame(target_rows), pd.DataFrame(route_rows)
 
 
 def main() -> None:
-    data = load_c_problem_data(WORKBOOK_PATH)
-    k_max = int(data.params.loc[data.params["parameter"] == "K_max", "value"].iloc[0])
-
-    summary_frames: list[pd.DataFrame] = []
-    detail_frames: list[pd.DataFrame] = []
-    for drone_count in range(1, k_max + 1):
-        for optimize_hover in (False, True):
-            summary, detail = evaluate_joint_solution(drone_count, optimize_hover=optimize_hover)
-            summary_frames.append(summary)
-            detail_frames.append(detail)
-
-    summary_table = pd.concat(summary_frames, ignore_index=True)
-    detail_table = pd.concat(detail_frames, ignore_index=True)
-
+    summary_table, target_table, route_table = solve_problem2()
     output_dir = Path("outputs/tables")
     processed_dir = Path("data/processed")
     output_dir.mkdir(parents=True, exist_ok=True)
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     summary_path = output_dir / "c_problem_problem2_joint_summary.csv"
-    detail_path = processed_dir / "c_problem_problem2_manual_review_detail.csv"
+    target_path = processed_dir / "c_problem_problem2_target_detail.csv"
+    route_path = processed_dir / "c_problem_problem2_route_detail.csv"
+
     summary_table.to_csv(summary_path, index=False, encoding="utf-8-sig")
-    detail_table.to_csv(detail_path, index=False, encoding="utf-8-sig")
+    target_table.to_csv(target_path, index=False, encoding="utf-8-sig")
+    route_table.to_csv(route_path, index=False, encoding="utf-8-sig")
 
     print("Problem 2 joint summary saved to:", summary_path)
     print(summary_table.to_string(index=False))
-    print("\nProblem 2 manual review detail saved to:", detail_path)
-    print(detail_table.head(20).to_string(index=False))
+    print("\nProblem 2 target detail saved to:", target_path)
+    print(target_table.head(20).to_string(index=False))
+    print("\nProblem 2 route detail saved to:", route_path)
+    print(route_table.head(20).to_string(index=False))
 
 
 if __name__ == "__main__":
     main()
+

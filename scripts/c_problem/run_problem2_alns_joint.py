@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 from random import Random
+import time
 
 import pandas as pd
 
@@ -30,18 +31,27 @@ ALNS_STAGE_WEIGHT_PRESETS = {
         "priority_remove": 0.9,
         "route_remove": 1.15,
         "tail_remove": 0.8,
+        "long_route_split": 1.25,
+        "short_route_merge": 1.05,
+        "cross_drone_migrate": 1.1,
     },
     "balance": {
         "random_remove": 1.0,
         "priority_remove": 1.05,
         "route_remove": 1.0,
         "tail_remove": 1.1,
+        "long_route_split": 1.05,
+        "short_route_merge": 1.15,
+        "cross_drone_migrate": 1.2,
     },
     "intensify": {
         "random_remove": 0.75,
         "priority_remove": 1.2,
         "route_remove": 0.9,
         "tail_remove": 1.35,
+        "long_route_split": 1.1,
+        "short_route_merge": 0.95,
+        "cross_drone_migrate": 1.25,
     },
 }
 
@@ -70,6 +80,24 @@ def _remove_nodes(route_plan: dict[int, list[list[int]]], removed_nodes: list[in
         for drone_id, routes in route_plan.items()
     }
     return _normalize_route_plan(updated)
+
+
+def _manual_service_map(data) -> dict[int, float]:
+    return {
+        int(row.node_id): float(row.manual_service_time_s)
+        for row in data.nodes.loc[data.nodes["node_id"] != 0, ["node_id", "manual_service_time_s"]].itertuples(index=False)
+    }
+
+
+def _direct_confirm_time_map(data) -> dict[int, float]:
+    return {
+        int(row.node_id): float(row.direct_confirm_time_s)
+        for row in data.nodes.loc[data.nodes["node_id"] != 0, ["node_id", "direct_confirm_time_s"]].itertuples(index=False)
+    }
+
+
+def _route_loads(route_plan: dict[int, list[list[int]]]) -> dict[int, int]:
+    return {int(drone_id): sum(len(route) for route in routes) for drone_id, routes in route_plan.items()}
 
 
 def _destroy_random_nodes(route_plan: dict[int, list[list[int]]], rng: Random, priority_map: dict[int, float]) -> tuple[str, dict[int, list[list[int]]], list[int]]:
@@ -120,6 +148,91 @@ def _destroy_low_utilization_tail(route_plan: dict[int, list[list[int]]], rng: R
     return "tail_remove", _normalize_route_plan(updated), removed_nodes
 
 
+def _destroy_long_route_segment(route_plan: dict[int, list[list[int]]], rng: Random, priority_map: dict[int, float]) -> tuple[str, dict[int, list[list[int]]], list[int]]:
+    del priority_map
+    best_route: tuple[int, int, list[int]] | None = None
+    for drone_id, routes in route_plan.items():
+        for route_index, route in enumerate(routes):
+            if len(route) >= 5 and (best_route is None or len(route) > len(best_route[2])):
+                best_route = (int(drone_id), route_index, route)
+    if best_route is None:
+        return "long_route_split", route_plan, []
+    drone_id, route_index, route = best_route
+    segment_len = max(2, len(route) // 2)
+    max_start = len(route) - segment_len
+    start_index = rng.randint(1, max_start) if max_start >= 1 else 0
+    removed_nodes = [int(node_id) for node_id in route[start_index : start_index + segment_len]]
+    updated = {int(current_drone_id): [list(nodes) for nodes in routes] for current_drone_id, routes in route_plan.items()}
+    updated[drone_id][route_index] = route[:start_index] + route[start_index + segment_len :]
+    return "long_route_split", _normalize_route_plan(updated), removed_nodes
+
+
+def _destroy_short_route_merge(route_plan: dict[int, list[list[int]]], rng: Random, priority_map: dict[int, float]) -> tuple[str, dict[int, list[list[int]]], list[int]]:
+    del rng, priority_map
+    populated_routes: list[tuple[int, int, list[int]]] = []
+    for drone_id, routes in route_plan.items():
+        for route_index, route in enumerate(routes):
+            if route:
+                populated_routes.append((int(drone_id), route_index, route))
+    if len(populated_routes) <= 1:
+        return "short_route_merge", route_plan, []
+    drone_id, route_index, route = min(populated_routes, key=lambda item: (len(item[2]), item[0], item[1]))
+    updated = {int(current_drone_id): [list(nodes) for nodes in routes] for current_drone_id, routes in route_plan.items()}
+    updated[drone_id] = updated[drone_id][:route_index] + updated[drone_id][route_index + 1 :]
+    return "short_route_merge", _normalize_route_plan(updated), [int(node_id) for node_id in route]
+
+
+def _destroy_cross_drone_migrate(route_plan: dict[int, list[list[int]]], rng: Random, priority_map: dict[int, float]) -> tuple[str, dict[int, list[list[int]]], list[int]]:
+    del rng
+    loads = _route_loads(route_plan)
+    if not loads:
+        return "cross_drone_migrate", route_plan, []
+    source_drone_id = max(loads, key=lambda drone_id: (loads[drone_id], -drone_id))
+    candidate_nodes: list[int] = []
+    for route in route_plan[source_drone_id]:
+        candidate_nodes.extend(int(node_id) for node_id in route)
+    if len(candidate_nodes) <= 2:
+        return "cross_drone_migrate", route_plan, []
+    removed_nodes = sorted(candidate_nodes, key=lambda node_id: (priority_map.get(int(node_id), 0.0), int(node_id)), reverse=True)[:2]
+    return "cross_drone_migrate", _remove_nodes(route_plan, removed_nodes), removed_nodes
+
+
+def _repair_policy_for_destroy(destroy_name: str, stage_name: str) -> str:
+    if destroy_name in {"priority_remove", "cross_drone_migrate"}:
+        return "priority_first"
+    if destroy_name in {"short_route_merge", "route_remove"}:
+        return "manual_cost_first"
+    if destroy_name in {"long_route_split", "tail_remove"}:
+        return "threshold_gap_first"
+    if stage_name == "explore":
+        return "manual_cost_first"
+    if stage_name == "intensify":
+        return "priority_first"
+    return "balanced"
+
+
+def _repair_sort_key(
+    node_id: int,
+    repair_policy: str,
+    priority_map: dict[int, float],
+    manual_service_map: dict[int, float],
+    direct_confirm_time_map: dict[int, float],
+    hover_times: dict[int, float],
+    rng: Random,
+) -> tuple[float, float, float, float]:
+    priority_score = float(priority_map.get(int(node_id), 0.0))
+    manual_score = float(manual_service_map.get(int(node_id), 0.0))
+    threshold_gap = max(0.0, float(direct_confirm_time_map.get(int(node_id), 0.0)) - float(hover_times.get(int(node_id), 0.0)))
+    jitter = rng.random() * 1e-3
+    if repair_policy == "manual_cost_first":
+        return (manual_score, priority_score, threshold_gap, jitter)
+    if repair_policy == "threshold_gap_first":
+        return (threshold_gap, manual_score, priority_score, jitter)
+    if repair_policy == "balanced":
+        return (0.65 * priority_score + 0.35 * manual_score, threshold_gap, priority_score, jitter)
+    return (priority_score, manual_score, threshold_gap, jitter)
+
+
 def _repair_removed_nodes(
     base_plan: dict[int, list[list[int]]],
     removed_nodes: list[int],
@@ -131,10 +244,26 @@ def _repair_removed_nodes(
     hover_power: float,
     battery_swap_time: float,
     priority_map: dict[int, float],
+    manual_service_map: dict[int, float],
+    direct_confirm_time_map: dict[int, float],
     home_drone_map: dict[int, int],
+    repair_policy: str,
+    rng: Random,
 ) -> dict[int, list[list[int]]] | None:
     repaired_plan = _normalize_route_plan(base_plan)
-    insertion_order = sorted(removed_nodes, key=lambda node_id: (priority_map.get(int(node_id), 0.0), int(node_id)), reverse=True)
+    insertion_order = sorted(
+        removed_nodes,
+        key=lambda node_id: _repair_sort_key(
+            int(node_id),
+            repair_policy,
+            priority_map,
+            manual_service_map,
+            direct_confirm_time_map,
+            hover_times,
+            rng,
+        ),
+        reverse=True,
+    )
     for insertion_index, node_id in enumerate(insertion_order):
         best_plan = None
         best_objective = math.inf
@@ -234,13 +363,19 @@ def _run_alns(
     battery_swap_time: float,
     seed: int,
 ):
+    run_started_at = time.perf_counter()
     rng = Random(seed + drone_count)
     priority_map = {int(row.node_id): float(row.priority_weight) for row in data.nodes.loc[data.nodes["node_id"] != 0, ["node_id", "priority_weight"]].itertuples(index=False)}
+    manual_service_map = _manual_service_map(data)
+    direct_confirm_time_map = _direct_confirm_time_map(data)
     destroy_methods = {
         "random_remove": _destroy_random_nodes,
         "priority_remove": _destroy_priority_nodes,
         "route_remove": _destroy_route,
         "tail_remove": _destroy_low_utilization_tail,
+        "long_route_split": _destroy_long_route_segment,
+        "short_route_merge": _destroy_short_route_merge,
+        "cross_drone_migrate": _destroy_cross_drone_migrate,
     }
     stage_weights = _initialize_stage_weights(list(destroy_methods))
 
@@ -264,9 +399,11 @@ def _run_alns(
     temperature = max(ALNS_MIN_TEMPERATURE, current["augmented_objective_s"] * 0.02)
 
     for iteration_index in range(ALNS_ITERATIONS):
+        iteration_started_at = time.perf_counter()
         stage_name = _alns_stage_name(iteration_index, ALNS_ITERATIONS)
         destroy_weights = stage_weights[stage_name]
         method_name = _select_destroy_method(destroy_weights, rng)
+        repair_policy = _repair_policy_for_destroy(method_name, stage_name)
         home_drone_map = _node_home_drone_map(current["route_plan"])
         destroy_name, partial_plan, removed_nodes = destroy_methods[method_name](current["route_plan"], rng, priority_map)
         if not removed_nodes:
@@ -282,7 +419,11 @@ def _run_alns(
             hover_power=hover_power,
             battery_swap_time=battery_swap_time,
             priority_map=priority_map,
+            manual_service_map=manual_service_map,
+            direct_confirm_time_map=direct_confirm_time_map,
             home_drone_map=home_drone_map,
+            repair_policy=repair_policy,
+            rng=rng,
         )
         if repaired_plan is None:
             destroy_weights[method_name] = max(0.2, destroy_weights[method_name] * 0.95)
@@ -323,6 +464,7 @@ def _run_alns(
                 "iteration_index": iteration_index,
                 "stage_name": stage_name,
                 "destroy_method": destroy_name,
+                "repair_policy": repair_policy,
                 "removed_nodes": ",".join(str(node_id) for node_id in removed_nodes),
                 "candidate_augmented_objective_s": candidate["augmented_objective_s"],
                 "current_augmented_objective_s": current["augmented_objective_s"],
@@ -332,11 +474,14 @@ def _run_alns(
                 "stage_method_weight": destroy_weights[method_name],
                 "route_count": current["route_count"],
                 "selected_direct_confirm_nodes": str(current["summary"].loc[0, "selected_direct_confirm_nodes"]),
+                "iteration_runtime_s": time.perf_counter() - iteration_started_at,
+                "elapsed_runtime_s": time.perf_counter() - run_started_at,
             }
         )
         temperature = max(ALNS_MIN_TEMPERATURE, temperature * ALNS_COOLING)
 
-    return best, accepted_history, pd.DataFrame(meta_rows)
+    total_runtime_s = time.perf_counter() - run_started_at
+    return best, accepted_history, pd.DataFrame(meta_rows), total_runtime_s
 
 
 def main() -> None:
@@ -372,7 +517,7 @@ def main() -> None:
         best_run_row: dict[str, float | int | str] | None = None
 
         for seed in ALNS_SEEDS:
-            best, accepted_history, meta_df = _run_alns(
+            best, accepted_history, meta_df, runtime_s = _run_alns(
                 drone_count=drone_count,
                 initial_plan=route_plan,
                 hover_times=hover_times,
@@ -408,6 +553,8 @@ def main() -> None:
                 "energy_penalty": best["energy_penalty"],
                 "final_move_tag": best["move_tag"],
                 "accepted_move_count": len(accepted_history) - 1,
+                "runtime_s": runtime_s,
+                "avg_iteration_runtime_s": float(meta_df["iteration_runtime_s"].mean()) if not meta_df.empty else 0.0,
                 "search_method": "alns",
             }
             compare_rows.append(run_row)
@@ -437,6 +584,8 @@ def main() -> None:
                 "mean_gain_vs_original_s": float(drone_runs["gain_vs_original_s"].mean()) if not drone_runs.empty else 0.0,
                 "std_gain_vs_original_s": float(drone_runs["gain_vs_original_s"].std(ddof=0)) if not drone_runs.empty else 0.0,
                 "improved_seed_ratio": improved_ratio,
+                "mean_runtime_s": float(drone_runs["runtime_s"].mean()) if not drone_runs.empty else 0.0,
+                "max_runtime_s": float(drone_runs["runtime_s"].max()) if not drone_runs.empty else 0.0,
                 "best_seed": int(best_run_row["seed"]) if best_run_row is not None else -1,
                 "best_move_tag": best_run_row["final_move_tag"] if best_run_row is not None else "original",
                 "best_optimized_route_count": int(best_run_row["optimized_route_count"]) if best_run_row is not None else int(original["route_count"]),
