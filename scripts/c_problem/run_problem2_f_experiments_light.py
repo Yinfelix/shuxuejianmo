@@ -13,7 +13,7 @@ from run_problem2_joint import _summarize_node_state
 
 
 LIGHT_SEED = 11
-LIGHT_K_VALUES = [3, 4]
+LIGHT_K_VALUES = [1, 2, 3, 4]
 
 
 def _best_of_runs(run_tables: list[pd.DataFrame]) -> pd.DataFrame:

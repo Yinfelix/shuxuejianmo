@@ -7,10 +7,14 @@
 ## 仓库内容
 
 - `scripts/c_problem/`：C 题的主要求解脚本与实验入口
+- `scripts/build_word_submission.py`：Word 交付稿生成辅助脚本
 - `data/processed/`：已经落盘的中间结果与实验明细
 - `outputs/tables/`：论文中使用的汇总表
 - `outputs/figures/`：导出的图像结果
-- `reports/paper/main.tex`：论文主文件
+- `reports/paper/main.tex`：完整版论文主文件
+- `reports/paper/main_compact.tex`：当前提交主线使用的紧凑版论文主文件
+- `reports/paper/build/`：论文 PDF 与提交产物输出目录
+- `docs/OPTIMIZE.md`：围绕“当前局限”整理的优化策略文档
 - `PLAN.md`：当前计划
 - `PROGRESS.md`：阶段性进展与结论
 
@@ -81,11 +85,54 @@ Python 依赖通过项目本地虚拟环境管理，当前常用解释器为：
 
 ### 论文编译
 
-论文主文件：`reports/paper/main.tex`
+当前论文相关文件分为两类：
 
-推荐命令：
+- `reports/paper/main.tex`：完整版论文源码
+- `reports/paper/main_compact.tex`：当前提交与排版收口主要使用的紧凑版源码
 
-- `latexmk -xelatex -interaction=nonstopmode -synctex=1 -outdir=reports/paper/build reports/paper/main.tex`
+如果只需要复现基础版 PDF，可以直接运行工作区任务：
+
+- `Build paper (XeLaTeX)`
+
+如果需要复现当前提交稿，请优先编译 `main_compact.tex`，并连续运行两次 XeLaTeX 以稳定目录、交叉引用和图号：
+
+- `C:\Users\LEGION\AppData\Local\Programs\MiKTeX\miktex\bin\x64\xelatex.exe -interaction=nonstopmode -synctex=1 -output-directory=reports/paper/build reports/paper/main_compact.tex`
+
+当前推荐查看的输出文件：
+
+- `reports/paper/build/main_compact.pdf`
+- `reports/paper/build/supplementary_materials.zip`
+
+如果需要生成 Word 交付稿辅助文件，可运行：
+
+- `python scripts/build_word_submission.py`
+
+该脚本当前会在 `reports/paper/build/` 下生成 `word_reference.docx` 以及后续 Word 导出所需的参考样式文件。
+
+### 论文图表与提交相关脚本
+
+当前论文中较新的关键图表与脚本包括：
+
+- `python scripts/c_problem/plot_solution_flowcharts.py`：生成 `outputs/figures/c_problem_problem1_solution_flowchart.png` 与 `outputs/figures/c_problem_problem2_solution_flowchart.png`
+- `python scripts/c_problem/plot_problem2_optimization_story.py`：生成问题二方案对照与诊断类图表
+
+当前论文中直接使用或高频引用的图像包括：
+
+- `outputs/figures/c_problem_problem1_route_panels.png`
+- `outputs/figures/c_problem_problem1_solution_flowchart.png`
+- `outputs/figures/c_problem_problem2_solution_flowchart.png`
+- `outputs/figures/c_problem_problem2_k4_best_solution_storyboard.png`
+- `outputs/figures/c_problem_problem2_k4_best_solution_diagnostics.png`
+- `outputs/figures/c_problem_problem2_k4_default_vs_alns_paths.png`
+
+### 当前推荐交付物
+
+如果目标是直接检查当前仓库里的可提交材料，优先看下面这些文件：
+
+- `reports/paper/build/main_compact.pdf`
+- `reports/paper/build/supplementary_materials.zip`
+- `docs/OPTIMIZE.md`
+- `reports/paper/main_compact.tex`
 
 ## 数据缺失项与当前回退逻辑
 
@@ -93,7 +140,7 @@ Python 依赖通过项目本地虚拟环境管理，当前常用解释器为：
 
 由于原工作簿中存在缺项，本仓库已经内置以下回退规则：
 
-1. `effective_energy_limit_J` 为空时，自动按 `battery_capacity_J - safety_reserve_J` 回填。
+1. `effective_energy_limit_J` 作为有效能量硬上限，若工作簿中给出显式值，则一律优先采用该值；只有当该参数在原表中确实缺失或数值单元格为空时，才降级按 `battery_capacity_J - safety_reserve_J` 回填。
 2. `GroundTime` 全空时，根据 `ManualPoints` 中的坐标、步行速度和绕行系数，自动生成地面时间矩阵。
 3. `FlightTime` 和 `FlightEnergy` 中存在非有限边时，加载器会根据节点坐标、水平/垂直速度和分段能耗补全缺失飞行边，从而恢复问题一从零构造所需的可达图。
 
@@ -155,6 +202,16 @@ Python 依赖通过项目本地虚拟环境管理，当前常用解释器为：
 
 - `python scripts/c_problem/run_problem2_joint_reorder_f.py`
 - `python scripts/c_problem/run_problem2_sensitivity.py`
+- `python scripts/c_problem/run_problem2_swap_experiment.py`
+- `python scripts/c_problem/run_problem2_threshold_sensitivity.py`
+- `python scripts/c_problem/run_problem2_serial_greedy_compare.py`
+- `python scripts/c_problem/run_problem2_alns_joint.py`
+
+其中较关键的论文对照输出包括：
+
+- `outputs/tables/c_problem_problem2_serial_greedy_compare.csv`
+- `outputs/tables/c_problem_problem2_alns_joint_summary_parallel_release_k4_seed23_probe.csv`
+- `outputs/tables/c_problem_problem2_alns_joint_compare_parallel_release_k4_seed23_probe.csv`
 
 ### MATLAB / Octave 示例
 

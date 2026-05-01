@@ -128,6 +128,7 @@ def _scored_candidates(
     energy_limit: float,
     hover_power: float,
     weight_vector: list[float],
+    prefer_resource_exhaustion: bool = False,
 ) -> list[dict[str, float | int | str]]:
     pending_manual = _build_manual_review_table(node_state, manual_points)
     if pending_manual.empty:
@@ -189,11 +190,13 @@ def _scored_candidates(
     max_hover_gap = max(float(candidate["hover_gap_s"]) for candidate in raw_candidates)
 
     for candidate in raw_candidates:
+        energy_term = 1.0 - float(candidate["residual_energy_ratio"]) if prefer_resource_exhaustion else float(candidate["residual_energy_ratio"])
+        time_term = 1.0 - float(candidate["residual_time_ratio"]) if prefer_resource_exhaustion else float(candidate["residual_time_ratio"])
         candidate["f_value"] = (
             weights["ground_gain"] * _safe_ratio(float(candidate["ground_gain_s"]), max_ground_gain)
             + weights["priority"] * _safe_ratio(float(candidate["priority_weight"]), max_priority)
-            + weights["energy_slack"] * float(candidate["residual_energy_ratio"])
-            + weights["time_slack"] * float(candidate["residual_time_ratio"])
+            + weights["energy_slack"] * energy_term
+            + weights["time_slack"] * time_term
             + weights["route_progress"] * float(candidate["route_progress_ratio"])
             - weights["hover_gap_penalty"] * _safe_ratio(float(candidate["hover_gap_s"]), max_hover_gap)
         )
@@ -218,6 +221,7 @@ def apply_f_guidance_policy(
     energy_limit: float,
     hover_power: float,
     weight_vector: list[float],
+    prefer_resource_exhaustion: bool = False,
 ) -> tuple[pd.DataFrame, list[dict[str, float | int | str]]]:
     guided_state = _ensure_guidance_columns(node_state)
     route_energy = {
@@ -243,6 +247,7 @@ def apply_f_guidance_policy(
             energy_limit=energy_limit,
             hover_power=hover_power,
             weight_vector=weight_vector,
+            prefer_resource_exhaustion=prefer_resource_exhaustion,
         )
         if not candidates:
             break
@@ -285,6 +290,9 @@ def evaluate_guidance_weights(
     hover_power: float,
     weight_vector: list[float],
     solution_type: str,
+    ground_mode: str = "serial",
+    battery_swap_time_s: float = 0.0,
+    prefer_resource_exhaustion: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[dict[str, float | int | str]]]:
     guided_state, selected_records = apply_f_guidance_policy(
         node_state=base_node_state,
@@ -294,6 +302,7 @@ def evaluate_guidance_weights(
         energy_limit=energy_limit,
         hover_power=hover_power,
         weight_vector=weight_vector,
+        prefer_resource_exhaustion=prefer_resource_exhaustion,
     )
     summary, detail = _summarize_node_state(
         node_state=guided_state,
@@ -302,6 +311,8 @@ def evaluate_guidance_weights(
         drone_count=drone_count,
         solution_type=solution_type,
         selected_nodes=[str(record["node_id"]) for record in selected_records],
+        ground_mode=ground_mode,
+        battery_swap_time_s=battery_swap_time_s,
     )
     weight_dict = vector_to_weight_dict(clamp_weight_vector(weight_vector))
     for key, value in weight_dict.items():

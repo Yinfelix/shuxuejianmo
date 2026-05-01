@@ -7,7 +7,7 @@ import pandas as pd
 from load_c_data import WORKBOOK_PATH, load_c_problem_data
 
 
-LEGACY_BASELINE_SUMMARY_PATH = Path("outputs/tables/c_problem_problem2_joint_summary.csv")
+LEGACY_BASELINE_SUMMARY_PATH = Path("outputs/tables/c_problem_problem2_algorithm_compare.csv")
 F_DEFAULT_LIGHT_PATH = Path("outputs/tables/c_problem_problem2_f_default_runs_light.csv")
 F_GA_LIGHT_PATH = Path("outputs/tables/c_problem_problem2_f_guidance_ga_runs_light.csv")
 F_PSO_LIGHT_PATH = Path("outputs/tables/c_problem_problem2_f_guidance_pso_runs_light.csv")
@@ -50,7 +50,7 @@ def _build_scheme_records(nodes: pd.DataFrame) -> list[dict[str, object]]:
     taskcount_detail = pd.read_csv(TASKCOUNT_DETAIL_PATH, encoding="utf-8-sig")
 
     scheme_records: list[dict[str, object]] = []
-    for drone_count in [3, 4]:
+    for drone_count in [1, 2, 3, 4]:
         baseline_row = legacy_summary.loc[
             (legacy_summary["drone_count"] == drone_count) & (legacy_summary["solution_type"] == "baseline")
         ].iloc[0]

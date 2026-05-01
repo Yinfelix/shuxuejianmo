@@ -5,8 +5,8 @@ avg_base_hover_time_s,49.375
 avg_direct_confirm_time_s,325.625
 base_direct_confirmable_count,0.0
 base_direct_confirmable_ratio,0.0
-base_energy_feasible_count,16.0
-confirm_energy_feasible_count,16.0
+base_energy_feasible_count,0.0
+confirm_energy_feasible_count,0.0
 operating_horizon_s,2600.0
 effective_energy_limit_J,135000.0
 hover_power_J_per_s,220.0

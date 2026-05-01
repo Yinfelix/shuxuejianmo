@@ -11,6 +11,7 @@ from run_problem2_joint import _build_node_state
 
 
 ENERGY_UTILIZATION_PENALTY_COEFF = 120.0
+TIME_UTILIZATION_PENALTY_COEFF = 80.0
 MAX_VNS_ITERATIONS = 8
 MIN_SPLIT_ROUTE_LENGTH = 4
 MAX_CANDIDATES_PER_NEIGHBORHOOD = 160
@@ -124,6 +125,8 @@ def _evaluate_route_plan(
     battery_swap_time: float,
     move_tag: str,
     solution_type: str = "taskcount_joint",
+    ground_mode: str = "serial",
+    prefer_resource_exhaustion: bool = False,
 ):
     problem1_detail = _rebuild_detail(drone_count, route_plan, hover_times, data, hover_power, battery_swap_time)
     expected_nodes = {int(node_id) for node_id in data.nodes.loc[data.nodes["node_id"] != 0, "node_id"].tolist()}
@@ -153,10 +156,20 @@ def _evaluate_route_plan(
         hover_power=hover_power,
         weight_vector=DEFAULT_WEIGHT_VECTOR,
         solution_type=solution_type,
+        ground_mode=ground_mode,
+        battery_swap_time_s=battery_swap_time,
+        prefer_resource_exhaustion=prefer_resource_exhaustion,
     )
 
     energy_penalty = float((route_table["unused_energy_ratio"] ** 2).mean()) if not route_table.empty else 0.0
-    augmented_objective = float(summary.loc[0, "total_closed_loop_time_s"]) + ENERGY_UTILIZATION_PENALTY_COEFF * energy_penalty
+    drone_totals = problem1_detail[["drone_id", "drone_total_time_s"]].drop_duplicates().copy()
+    drone_totals["unused_time_ratio"] = 1.0 - (drone_totals["drone_total_time_s"] / horizon if horizon > 0 else 0.0)
+    time_penalty = float((drone_totals["unused_time_ratio"] ** 2).mean()) if not drone_totals.empty else 0.0
+    augmented_objective = (
+        float(summary.loc[0, "total_closed_loop_time_s"])
+        + ENERGY_UTILIZATION_PENALTY_COEFF * energy_penalty
+        + TIME_UTILIZATION_PENALTY_COEFF * time_penalty
+    )
 
     return {
         "move_tag": move_tag,
@@ -168,6 +181,7 @@ def _evaluate_route_plan(
         "route_table": route_table,
         "route_count": int(route_table.shape[0]),
         "energy_penalty": energy_penalty,
+        "time_penalty": time_penalty,
         "augmented_objective_s": augmented_objective,
         "avg_route_energy_utilization": float(route_table["energy_utilization_ratio"].mean()) if not route_table.empty else 0.0,
         "min_route_energy_utilization": float(route_table["energy_utilization_ratio"].min()) if not route_table.empty else 0.0,

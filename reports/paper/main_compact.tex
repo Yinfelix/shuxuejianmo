@@ -1,0 +1,592 @@
+\documentclass[12pt]{article}
+
+\usepackage[UTF8]{ctex}
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{amsmath, amssymb, booktabs, float, graphicx, array, tabularx}
+\usepackage{hyperref}
+\usepackage{setspace}
+\usepackage{titlesec}
+
+\titleformat{\section}{\centering\heiti\zihao{4}}{\thesection}{1em}{}
+\titleformat{\subsection}{\heiti\zihao{-4}}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\heiti\zihao{-4}}{\thesubsubsection}{1em}{}
+\titlespacing*{\section}{0pt}{1.2ex}{1.0ex}
+\titlespacing*{\subsection}{0pt}{1.0ex}{0.8ex}
+\titlespacing*{\subsubsection}{0pt}{0.8ex}{0.6ex}
+
+\makeatletter
+\renewcommand{\maketitle}{
+\begin{center}
+{\heiti\zihao{-3}\@title\par}
+\end{center}
+\vspace{1em}
+}
+\makeatother
+
+\title{面向智慧社区的多无人机-物业人员联合巡检优化模型}
+
+\begin{document}
+
+\pagestyle{plain}
+\pagenumbering{arabic}
+\setcounter{page}{1}
+\singlespacing
+\songti\zihao{-4}
+
+\maketitle
+
+\begin{abstract}
+近年来，随着智慧社区治理向数字化、精细化方向发展，如何协调\textbf{多无人机巡检}与\textbf{物业人工复核}、缩短巡检闭环时间，已成为社区安全管理中的关键问题。本文针对多无人机与物业人员联合巡检问题，围绕\textbf{空中巡检路径优化}与\textbf{直接确认-地面复核联合优化}两个层次展开研究，在满足\textbf{单次任务能量上限}、\textbf{基础悬停要求}和\textbf{物业统一出发约束}的前提下，以最小化\textbf{总闭环完成时间}为核心目标，建立带悬停时间分配的多旅行商扩展模型与空地联合闭环优化模型，并设计启发式算法与\textbf{自适应大邻域搜索}算法进行求解，为智慧社区巡检资源配置提供定量依据。
+
+针对问题一，本文首先根据目标点空间位置、优先级和基础悬停需求构造多无人机巡检模型，将\textbf{任务划分}、\textbf{访问顺序}和\textbf{悬停时间分配}统一到同一优化框架中；随后采用\textbf{K-means}起点预分组、\textbf{构造式贪心}和\textbf{层次滚动重构}等方法生成并改进可行航线。结果表明，构造式贪心在\textbf{$K=1,2,3$}下更优，层次滚动重构在\textbf{$K=4$}下更优；空中阶段最大完工时长由\textbf{1312.2 s}压缩至\textbf{303.4 s}，降幅超过\textbf{75\%}，说明多机并行与合理任务切分能够显著提升巡检效率。
+
+针对问题二，本文在问题一结果基础上引入\textbf{直接确认阈值}，建立\textbf{无人机直接确认与物业串行复核}的联合闭环优化模型，并利用\textbf{边际收益优先的状态评分策略}决定追加悬停节点，再结合\textbf{地面复核路径重算}、\textbf{跨任务单点交换}和\textbf{ALNS}进一步优化闭环方案。结果表明，在物业人员必须待全部无人机返航后统一出发的合规约束下，\textbf{边际收益优先串行策略}明显优于贪心耗尽空中资源策略；当\textbf{$K=4$}时，总闭环时间可由基线的\textbf{4533.2 s}降至\textbf{3469.5 s}，而 ALNS 扩展搜索可进一步将其压缩至\textbf{2997.6 s}，并将\textbf{直接确认节点数}由\textbf{7}个提升到\textbf{12}个。
+
+综合比较可知，\textbf{$K=4$}是兼顾巡检效率、资源投入与闭环效果的最优配置。若强调\textbf{稳健性}、\textbf{合规性}与\textbf{可复现性}，推荐采用\textbf{边际收益优先的串行联合求解主线}；若进一步追求更优结果上界，则可在此基础上叠加局部交换、阈值优化和 ALNS 扩展搜索。本文模型与算法可为智慧社区空地协同巡检方案设计提供可落地的决策支持。
+
+\par\noindent{\heiti 关键词：} 多无人机巡检；空地协同；联合闭环优化；直接确认；自适应大邻域搜索
+\end{abstract}
+
+\clearpage
+\tableofcontents
+\clearpage
+
+\section{问题重述}
+题目围绕\textbf{智慧社区巡检}场景，给出巡检目标点、无人机飞行时间与能耗矩阵、基础悬停时长、直接确认阈值以及物业地面复核时间等数据，要求建立\textbf{多无人机与物业人员联合巡检优化模型}。与单纯的路径规划问题不同，本题不仅要安排空中巡检路径，还要统筹直接确认与人工复核之间的衔接关系，因此本质上是一个带有\textbf{资源分配}、\textbf{路径组织}与\textbf{闭环约束}的空地协同优化问题。
+
+问题一聚焦\textbf{空中巡检阶段}。在给定无人机数量 $K$ 的条件下，需要确定每架无人机执行多少次任务、每次任务覆盖哪些目标点、各目标点的访问顺序如何安排，以及基础悬停时间如何在不同任务中分配。对应方案既要满足\textbf{基础巡检要求}、\textbf{单次飞行能耗上限}和\textbf{运营时长约束}，又要尽量缩短无人机阶段的整体完成时间。
+
+问题二在问题一基础上进一步引入\textbf{直接确认与人工复核闭环机制}。若某目标点累计停留时间达到直接确认阈值，则该点可由无人机直接闭环；否则，该点需在无人机返航后由物业人员前往现场复核。因此，模型不仅要决定哪些点通过追加悬停实现空中直接确认、哪些点转入地面复核，还要优化物业人员的复核顺序与通行路径，以最小化\textbf{总闭环完成时间}。
+
+从决策逻辑上看，本题需要统筹两类资源之间的\textbf{边际替代关系}：增加无人机悬停时间可以提升直接确认比例、减少人工复核，但也会延长空中阶段；压缩悬停时间能够缩短飞行阶段，却可能显著抬高地面复核负担。因此，本文将题目概括为一个以\textbf{闭环效率最优}为核心、兼顾\textbf{能耗}、\textbf{优先级}与\textbf{负载均衡}的空地联合优化问题。
+
+\section{问题分析}
+
+\subsection{问题一的分析}
+问题一要求在给定无人机数量 $K$ 的前提下，同时确定\textbf{任务划分}、\textbf{访问顺序}、\textbf{任务条数}与\textbf{悬停时间分配}。这一问题并非单纯的旅行商或车辆路径问题，而是一个同时包含离散决策与连续分配的混合优化问题：路径顺序与任务切分属于离散组合决策，悬停时间分配属于连续变量决策，而多架无人机并行后的系统目标又由各机完成时间的最大值决定。因此，若只优化局部最短路径，往往会造成个别无人机负载过重，进而抬高系统最大完工时长。
+
+进一步看，问题一的主要难点体现在三方面。其一，\textbf{单次任务能耗约束}决定了部分节点需要通过多次 sortie 串联覆盖，单条长航线难以完成全部巡检任务；其二，\textbf{基础悬停要求}使路径代价同时包含飞行时间与节点服务时间，路径优劣不能仅按距离或飞行时间衡量；其三，\textbf{多机并行效应}将系统目标转化为最大完工时长最小，这要求算法优先控制最慢无人机的负载。基于上述结构特征，问题一宜采用先构造稳定可行解、再依据任务结构实施重构优化的两阶段求解思路。
+
+\subsection{问题二的分析}
+问题二在问题一基础上引入\textbf{直接确认阈值}与\textbf{物业串行复核规则}，使问题由单纯空中路径优化扩展为空地协同闭环优化。此时，目标点状态进一步分为达到阈值后由无人机直接确认和未达阈值后转入地面复核两类。问题二的核心决策是识别值得追加悬停资源的节点，以减少地面阶段的服务与通行成本。
+
+这一问的核心矛盾是\textbf{空中追加悬停时间}与\textbf{地面复核负担}之间的边际替代关系。若某节点只差少量悬停时间即可达到直接确认阈值，且其地面复核路径位置较偏、人工服务时间较长，那么在空中阶段追加停留通常更具收益；若某节点阈值缺口过大、优先级较低、地面复核代价也有限，则继续追加悬停可能只会拉长空中阶段，而难以带来闭环总时间的有效下降。再加上题目规定物业人员必须待全部无人机返航后统一出发，因此地面阶段与空中阶段严格串联，模型评价必须围绕\textbf{总闭环完成时间}展开。
+
+\subsection{整体研究路线}
+综合两问的结构特征，本文采用\textbf{数据预处理} $\rightarrow$ \textbf{问题一可行基线构造} $\rightarrow$ \textbf{问题二串行联合闭环优化} $\rightarrow$ \textbf{稳健性与扩展搜索验证}的总体研究路线。首先，通过字段统一、一致性校验和地面时间补全形成统一的数据输入层；其次，在问题一中分别构造构造式贪心与层次滚动重构两类求解器，对不同 $K$ 场景形成稳定可行航线；然后，在问题二中以问题一节点级结果为输入，构造直接确认判定、状态评分、地面复核路径重算与局部交换增强的主线联合求解方法；最后，通过阈值灵敏度、补充评价标准和 ALNS 扩展搜索，对主线方案的稳健性、可解释性与结果上界进行验证。
+
+\section{模型假设与符号说明}
+
+\subsection{基本假设}
+为保证模型可解且不偏离题目本意，作如下假设：
+
+\begin{enumerate}
+	\item 所有无人机同构，飞行性能、悬停能耗与换电时间一致。
+	\item 每次无人机任务均从社区服务中心出发，并在任务结束后返回服务中心。
+	\item 无人机在任务执行过程中不考虑空域冲突与排队起降，仅考虑题目给出的飞行时间、飞行能耗、悬停能耗和换电时间。
+	\item 目标点的巡检效果仅由累计停留时间决定，不区分由哪架无人机完成。
+	\item 物业人员在无人机完成空中巡检后统一出发进行复核，不与无人机阶段并行。
+	\item 物业复核点的服务时间与通行时间可加总表示，且地面复核过程不再受无人机运营时长约束。
+\end{enumerate}
+
+\subsection{主要符号}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{>{\raggedright\arraybackslash}p{3cm} >{\raggedright\arraybackslash}p{9.5cm}}
+\toprule
+符号 & 含义 \\
+\midrule
+$S=\{1,2,\dots,n\}$ & 巡检目标点集合 \\
+$K$ & 无人机数量 \\
+$T_{ij}^{u}$ & 无人机从节点 $i$ 飞行到节点 $j$ 的时间 \\
+$E_{ij}^{u}$ & 无人机从节点 $i$ 飞行到节点 $j$ 的能耗 \\
+$\bar{E}$ & 单次任务可用电量上限 \\
+$\tau_b$ & 无人机返航后的换电时间 \\
+$b_s$ & 目标点 $s$ 的基础空中巡检时间要求 \\
+$h_s$ & 目标点 $s$ 的无人机直接确认累计停留阈值 \\
+$T_s$ & 目标点 $s$ 的累计停留时间 \\
+$p_s$ & 目标点 $s$ 的优先级权重 \\
+$G_{ij}$ & 物业人员地面通行时间 \\
+$T_u$ & 无人机巡检阶段完成时间 \\
+$T_g$ & 物业复核阶段完成时间 \\
+$T$ & 总闭环完成时间，满足 $T=T_u+T_g$ \\
+$y_s$ & 若目标点 $s$ 由无人机直接确认，则 $y_s=1$，否则为 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{数据理解与预处理思路}
+题目配套数据表包括目标点基础信息、无人机参数、飞行时间矩阵、飞行能耗矩阵、物业复核点信息以及地面通行时间矩阵。结合题面说明，预处理主要围绕三项工作展开：一是校验节点编号、坐标、优先级、基础悬停时间和直接确认阈值在不同工作表中的一致性；二是检查飞行时间矩阵与飞行能耗矩阵的缺失值、异常值与可达性；三是将地面复核点与空中巡检点建立稳定映射，为后续闭环建模提供统一索引。
+
+在正式求解前，本文进一步生成单位悬停收益、按优先级修正后的直接确认收益、单机有效工作窗口与负载均衡指标等辅助量。这些量一方面用于目标函数和约束表达，另一方面也为构造式启发式与后续局部搜索提供排序依据。题目附件已明确给出无人机有效能量上限 135000 J，本文据此统一设置单次任务能量约束。由于原始地面通行时间矩阵为空，本文依据物业复核点坐标、步行速度和绕行系数构造近似通行时间矩阵，以保证空地联合闭环模型输入完整。
+
+\subsection{基线统计结论}
+在所有实验开始前，先对附件做基线统计。结果显示，附件共包含 16 个实际巡检目标点和 1 个服务中心节点；基础悬停时间均值为 49.375 s，而直接确认阈值均值为 325.625 s。二者差距较大，意味着若仅满足基础巡检，大多数目标点并不会自然达到直接确认阈值，地面复核将承担绝大部分闭环压力。
+
+同时，按题面数据计算单点往返飞行与基础悬停能耗后可知，16 个目标点均满足单点可达条件。问题的主导矛盾在于有限悬停资源如何在总运营时长、任务切分与直接确认收益之间分配，因此后续实验重点放在多机分工、路径结构和空地收益替代关系上。
+
+\section{模型建立与求解}
+
+\subsection{总体算法框架}
+为实现从模型表达到结果验证的完整闭环，本文将实验设计划分为四个层次。第一层比较问题一在全 $K$ 下的可行航线结构与路径质量；第二层评估问题二从基础悬停、追加悬停到联合闭环求解的收益来源；第三层检验交换算子、阈值扰动与补充评价指标对结果稳定性的影响；第四层利用 ALNS 搜索更优任务结构，并评估结果上界。
+
+全部表格与图形均由统一计算流程生成，各实验在数据来源、约束口径和评价指标上保持一致，因此不同求解层级之间具有可比性。
+
+\subsection{实验输出与评价指标}
+围绕完整实现与结果对比两个目标，本文重点输出以下五类结果：
+
+\begin{enumerate}
+	\item 问题一在 $K=1,2,3,4$ 下的最优算法选择、最大完工时长、总能耗和负载均衡度；
+	\item 问题二在 $K=1,2,3,4$ 下从 baseline、追加悬停到联合求解的闭环时间变化；
+	\item 交换算子、阈值倍率扰动和状态评分结构对不同 $K$ 的增益差异；
+	\item 补充评价标准下的优先级覆盖率和人工复核负担；
+	\item ALNS 在各个 $K$ 上的稳定性，以及在 $K=4$ 上的最优重构结果。
+\end{enumerate}
+
+除总闭环时间外，本文进一步引入优先级加权直接确认率 \textit{PriorityDirectRate}、人工服务时间占比 \textit{ManualServiceRatio} 以及扩展评分
+
+\begin{equation}
+\text{Score}_{+} = 0.55\frac{T}{T^{\text{base}}_K} + 0.25\left(1-\text{PriorityDirectRate}\right) + 0.20\,\text{ManualServiceRatio},
+\end{equation}
+
+用于补充刻画高优先级点的直接确认情况以及人工复核负担变化。这些指标与总闭环时间共同构成评价体系，使方案比较同时覆盖效率、优先级覆盖和人工负担三个维度。
+
+\subsection{问题一：多无人机巡检路径与停留时间优化模型}
+
+\subsubsection{建模目标}
+问题一的核心是确定空中巡检阶段的最优组织方式。本文将其刻画为一个以最大完工时长最小为主目标、兼顾总能耗、优先级覆盖与负载均衡的多目标优化问题：
+
+\begin{equation}
+\min J_1 = \omega_1 T_u + \omega_2 \sum E_{\text{total}} + \omega_3 B - \omega_4 P,
+\end{equation}
+
+其中，$T_u$ 表示空中阶段最大完工时长，$B$ 表示负载不均衡惩罚项，$P$ 表示高优先级目标点的提前完成收益，$\omega_1,\omega_2,\omega_3,\omega_4$ 为权重参数。该式用于统一表述问题一的理论目标，而后续启发式算法使用的是与之同方向的局部代理评分，因此两者在主导判据上保持一致。
+
+\subsubsection{关键约束}
+为便于后续建模，引入如下决策变量：若无人机 $k$ 的第 $r$ 次任务经过弧 $(i,j)$，则令二元变量 $x_{ij}^{kr}=1$，否则为 0；若无人机 $k$ 在第 $r$ 次任务中对目标点 $s$ 的悬停时间为 $z_s^{kr}$，则有
+
+\begin{equation}
+T_s = \sum_k \sum_r z_s^{kr}, \quad z_s^{kr} \ge 0.
+\end{equation}
+
+各任务的路径流守恒关系可统一表示为
+
+\begin{equation}
+\sum_j x_{ij}^{kr} - \sum_j x_{ji}^{kr} = 0,
+\end{equation}
+
+其中除服务中心外，任一被访问节点在同一任务中的进入次数与离开次数相等，服务中心满足起点与终点闭环约束。所有目标点均须完成基础空中巡检，即
+
+\begin{equation}
+T_s \ge b_s, \quad \forall s \in S.
+\end{equation}
+
+对任一无人机单次任务，其飞行与悬停总能耗不得超过单次可用电量上限：
+
+\begin{equation}
+E_{\text{route}} + E_{\text{hover}} \le \bar{E},
+\end{equation}
+
+若记单位悬停能耗率为 $\rho_h$，则有
+
+\begin{equation}
+E_{\text{hover}} = \rho_h \sum_{s \in S} z_s^{kr}.
+\end{equation}
+
+单架无人机的总持续时间由飞行、悬停和换电共同构成。若无人机 $k$ 共执行 $R_k$ 次任务，则
+
+\begin{equation}
+T_u^{(k)} = \sum_{r=1}^{R_k} \left(T_{\text{route}}^{kr} + T_{\text{hover}}^{kr}\right) + (R_k-1)\tau_b,
+\end{equation}
+
+系统阶段完成时间定义为各无人机完成时间的最大值：
+
+\begin{equation}
+T_u = \max_{k=1,2,\dots,K} T_u^{(k)}.
+\end{equation}
+
+\subsubsection{求解方法}
+从结构上看，问题一属于带悬停时间分配与电量约束的多旅行商扩展问题。针对题目当前规模，本文采用先构造、再校验、后重构的两阶段求解思路。
+
+第一阶段构造式启发式用于生成稳定基线解。算法先用 K-means 给低到中等 $K$ 生成代表性起点，再为这些代表点建立单点可行航线；随后对剩余目标点同时评估插入现有任务和新开独立任务两类动作，逐一重算新增飞行时间、悬停时间、返航时间与能耗，仅保留满足单次任务电量上限和单机运营时长约束的候选动作，并以新增后的系统最大完工时长最小作为第一准则完成选择。
+
+第二阶段层次滚动重构主要面向 $K=4$ 的高资源场景。该方法先通过带权聚类确定节点归属，再在簇内滚动构造多次 sortie，将先分簇、再配机、再排任务次序的结构显式编码进求解流程。这样可以避免单纯插入式策略在高并行配置下过早锁死长路径结构。
+
+两类方法最终都输出同口径结果：每架无人机执行多少次任务、每次任务包含哪些节点、各节点悬停时间如何分配，以及由此形成的最大完工时长、总能耗和负载离散度。这一输出结构与题面要求的四个核心决策量一一对应，因此问题一不仅完成了理论表达，也已经落地为可复验的工程流程。
+
+图 \ref{fig:problem1-solution-flowchart} 对问题一的求解逻辑进行了流程化概括：先完成数据预处理和起点构造，再对候选动作做统一可行性筛选，最后根据资源配置选择构造式贪心或层次滚动重构主线，并输出统一口径的航线与指标结果。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\linewidth]{outputs/figures/c_problem_problem1_solution_flowchart.png}
+\caption{问题一求解流程图}
+\label{fig:problem1-solution-flowchart}
+\end{figure}
+
+\subsubsection{结果分析}
+问题一在全 $K$ 配置下的核心结果见表 \ref{tab:problem1-method-compare-full}。可以看到，构造式贪心在 $K=1,2,3$ 下更优，而层次滚动重构在 $K=4$ 下反超，说明问题一存在清晰的分段最优结构，不同资源配置对应不同优势算法。
+
+\begin{table}[H]
+\centering
+\caption{问题一全 $K$ 的两类实现结果对比}
+\label{tab:problem1-method-compare-full}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{ccccccc}
+\toprule
+$K$ & 贪心完工/s & 滚动重构完工/s & 采用算法 & 航线条数 & 总能耗/J & 负载标准差/s \\
+\midrule
+1 & 1312.2 & 1431.8 & 贪心 & 2 & 210813 & 0.00 \\
+2 & 537.4 & 544.9 & 贪心 & 2 & 219924 & 8.94 \\
+3 & 361.3 & 413.5 & 贪心 & 3 & 220008 & 6.84 \\
+4 & 322.4 & 303.4 & 滚动重构 & 4 & 239366 & 14.87 \\
+\bottomrule
+\end{tabular}
+\normalsize
+\end{table}
+
+从规模效应看，系统最大完工时长由 $K=1$ 的 1312.2 s 降到 $K=4$ 的 303.4 s，空中阶段压缩约 76.9\%。其中，$K=1\rightarrow 2$ 的边际收益最大，之后收益逐步减弱。与此同时，总能耗始终稳定在 21.1 万 J 到 23.9 万 J 区间内，表明问题一的主导因素在于多机分工与路径切分方式。
+
+为检验起点结构设计的必要性，本文进一步比较了 K-means 起点选取前后的结果。实验表明，K-means 使 $K=1,2,3$ 的最大完工时长分别改善 12.0\%、7.7\% 和 11.2\%，到 $K=4$ 时收益趋于饱和。这表明先聚类后构造是问题一在低到中等资源配置下的稳定有效组件。
+
+图 \ref{fig:problem1-route-panels} 给出了不同 $K$ 下的代表航线路径。随着无人机数量增加，原先跨越社区南北的长闭环被不断拆解为更短的局部任务链，这与表 \ref{tab:problem1-method-compare-full} 中的完工时长下降趋势一致。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{outputs/figures/c_problem_problem1_route_panels.png}
+\caption{问题一在不同无人机数量下的代表航线路径总览}
+\label{fig:problem1-route-panels}
+\end{figure}
+
+\subsection{问题二：多无人机与物业人员联合闭环优化模型}
+
+\subsubsection{直接确认与联合目标}
+在问题一结果基础上，引入二元变量 $y_s$ 表示目标点是否由无人机直接确认：
+
+\begin{equation}
+y_s =
+\begin{cases}
+1, & T_s \ge h_s, \\
+0, & T_s < h_s.
+\end{cases}
+\end{equation}
+
+若 $y_s=0$，则该点必须进入物业复核集合。此时，空中巡检与地面复核之间形成资源替代关系：提高 $T_s$ 有助于增加直接确认比例，但也会推高空中阶段耗时；降低 $T_s$ 则可能导致更多目标点进入物业复核，从而抬高 $T_g$。
+
+问题二的理论评价目标写为
+
+\begin{equation}
+\min J_2 = \lambda_1 (T_u + T_g) + \lambda_2 \sum_{s \in S} p_s (1-y_s) + \lambda_3 N_g,
+\end{equation}
+
+其中，$N_g$ 表示需要人工复核的目标点数量。本文将 $J_2$ 视为论文层的正式优化目标：严格串行规则下的总闭环完成时间 $T=T_u+T_g$ 是首要判据，高优先级点未被直接确认的损失与人工复核规模是次级代价。
+
+对于所有需要人工复核的点，物业人员必须在全部无人机完成空中巡检并返航后，才能从服务中心统一出发并完成一条地面复核路径。若记复核点集合为 $S_g=\{s \in S : y_s=0\}$，物业人员是否从复核点 $i$ 前往复核点 $j$ 的二元变量为 $g_{ij}$，点 $s$ 的现场复核服务时间为 $\tau_s^g$，则地面阶段目标可写为
+
+\begin{equation}
+T_g = \sum_i \sum_j G_{ij} g_{ij} + \sum_{s \in S_g} \tau_s^g.
+\end{equation}
+
+因此，问题二需要根据节点的地面代价与阈值缺口判断追加悬停的投入产出。若某些高优先级点在地面复核中通行代价更高，则应优先满足其直接确认阈值。
+
+\subsubsection{串行闭环求解方法}
+问题二主线算法以问题一的节点级结果为输入，分五步完成求解。
+
+第一步，将每个目标点映射回所属无人机与所属任务，形成基础 node state。第二步，对所有尚未达到直接确认阈值的节点计算补足悬停缺口后可减少的地面服务时间与通行时间，并同步检查该动作是否会破坏所属任务的能量约束与所属无人机的总时长约束。第三步，使用统一状态评分函数对候选动作进行排序：
+
+\begin{equation}
+\begin{aligned}
+F(u,v,E) &= 0, && \text{若转移后不可返航；} \\
+F(u,v,E) &= w_1 \tilde{G}(u,v)+w_2 \tilde{P}(v)+w_3 \tilde{S}_E(v)
+	       + w_4 \tilde{S}_T(v) \\
+	      &\quad + w_5 \tilde{R}(v)-w_6 \tilde{H}(v), && \text{否则。}
+\end{aligned}
+\end{equation}
+
+其中，$\tilde{G}(u,v)$ 表示地面代价节省，$\tilde{P}(v)$ 表示优先级，$\tilde{S}_E(v)$ 与 $\tilde{S}_T(v)$ 表示能量和时长松弛度，$\tilde{R}(v)$ 表示航线推进位置，$\tilde{H}(v)$ 表示达到直接确认阈值尚需补足的悬停缺口。状态评分函数 $F$ 用于局部候选动作排序，最终方案优劣仍由整体目标 $J_2$ 统一检验。
+
+第四步，每接受一个追加动作，就立即更新节点状态、直接确认集合和地面待复核集合，并重新计算物业复核路径。第五步，在全部无人机返航后，物业人员才从服务中心统一出发，串行完成剩余复核点；总闭环时间按空中阶段完成时刻与其后的地面通行、服务时间严格相加。基于这条主线，本文再派生出交换算子、阈值灵敏度与 ALNS 等增强实验，用于判断当前方案是否存在稳定可改进空间。
+
+图 \ref{fig:problem2-solution-flowchart} 进一步把问题二的主线求解器拆解为“候选识别、边际收益计算、状态评分排序、动作接受、地面重算”五个连续环节，并把交换增强、阈值灵敏度和 ALNS 扩展搜索作为主线之外的补充分支，使后续结果比较的来源更加直观。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\linewidth]{outputs/figures/c_problem_problem2_solution_flowchart.png}
+\caption{问题二求解流程图}
+\label{fig:problem2-solution-flowchart}
+\end{figure}
+
+\subsubsection{结果分析}
+为避免直接跳到最终推荐方案，本文先给出问题二的首轮全 $K$ 闭环对比。基于问题一可行航线，首先比较三类早期方案：仅满足基础巡检的 baseline、基于边际收益的追加悬停贪心，以及对候选确认点做全局搜索的 GA 方案。结果见表 \ref{tab:problem2-round1-fullk}。
+
+\begin{table}[H]
+\centering
+\caption{问题二首轮闭环算法在全 $K$ 下的结果对比}
+\label{tab:problem2-round1-fullk}
+\begin{tabular}{ccccc}
+\toprule
+$K$ & baseline/s & 边际收益贪心/s & GA/s & 最优方案直接确认数 \\
+\midrule
+1 & 5706.8 & 5642.4 & 5642.4 & 1 \\
+2 & 4798.0 & 4717.4 & 4717.4 & 1 \\
+3 & 4622.5 & 4183.8 & 4112.2 & 4 \\
+4 & 4538.7 & 3796.2 & 3693.1 & 6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+表 \ref{tab:problem2-round1-fullk} 给出第一层清晰结论：问题二的收益并不均匀分布在所有 $K$ 上。对 $K=1,2$，追加悬停只能带来有限改善，且贪心与 GA 结果几乎重合；对 $K=3,4$，空中余量增大后，直接确认带来的地面节省才开始显著放大。这说明问题二必须与问题一的并行能力联动分析，不能脱离 $K$ 单独讨论。
+
+在首轮对比基础上，本文进一步实现直接确认判定与地面复核路径重算相结合的联合求解方法。模型严格执行物业人员在全部无人机完成空中巡检并返航后统一出发的约束，因此总闭环时间按空中阶段完成时间与其后的地面通行、服务时间顺序累计。该方法在全 $K$ 下的结果见表 \ref{tab:problem2-joint-fullk}。
+
+\begin{table}[H]
+\centering
+\caption{问题二当前联合求解器在全 $K$ 下的结果}
+\label{tab:problem2-joint-fullk}
+\begin{tabular}{cccccc}
+\toprule
+$K$ & 空中阶段/s & 地面阶段/s & 总闭环/s & 直接确认数 & 人工复核数 \\
+\midrule
+1 & 1517.2 & 3735.5 & 5252.7 & 2 & 14 \\
+2 & 612.4 & 3938.2 & 4550.6 & 2 & 14 \\
+3 & 570.9 & 3228.1 & 3799.1 & 5 & 11 \\
+4 & 562.7 & 2906.9 & 3469.5 & 7 & 9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+与首轮 GA 相比，联合求解方法将空中追加悬停、直接确认判定和物业统一出发后的地面复核路径重算纳入同一评价闭环，并在 $K=1$ 到 $K=4$ 上形成了可复用的主线方案。结果表明，问题二的总闭环时间随着 $K$ 增加单调下降，但下降速度明显慢于问题一空中完工时间，说明在严格串行规则下，地面阶段仍是闭环瓶颈的重要组成部分。
+
+从闭环收益看，$K=1,2$ 的改进仍然有限，而 $K=3,4$ 开始出现更明显的结构收益，说明只有当问题一为问题二释放出足够空中余量时，直接确认机制的作用才会被真正放大。特别是 $K=4$，空中阶段已经不再是唯一瓶颈，此时空地资源替代关系开始决定总闭环时间的上界。
+
+在当前联合求解器上，本文进一步加入跨任务单点交换算子。交换增强后的全 $K$ 结果见表 \ref{tab:problem2-swap-fullk}。
+
+\begin{table}[H]
+\centering
+\caption{交换算子对当前联合求解器的全 $K$ 增益}
+\label{tab:problem2-swap-fullk}
+\begin{tabular}{ccccc}
+\toprule
+$K$ & 联合求解基线/s & 交换增强后/s & 闭环增益/s & 交换次数 \\
+\midrule
+1 & 5252.7 & 5249.9 & 2.8 & 1 \\
+2 & 4550.6 & 4529.6 & 20.9 & 3 \\
+3 & 3799.1 & 3785.5 & 13.6 & 4 \\
+4 & 3469.5 & 3442.8 & 26.8 & 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+表 \ref{tab:problem2-swap-fullk} 说明，交换算子的收益虽不如主线联合求解显著，但在所有 $K$ 上都能带来非负改进，其中 $K=4$ 的增益最大。这表明当前基线路线之间仍存在可利用的跨任务重配空间。
+
+为检验主线算法的稳定性，本文进一步对比主线串行策略与串行贪心耗尽策略，结果见表 \ref{tab:problem2-f-light-fullk}。对 $K=1,2$，两者完全重合；对 $K=3,4$，串行贪心耗尽分别比主线策略差 169.4 s 和 16.8 s，且直接确认数未增加。这表明严格串行规则下，有限追加悬停应优先配置给能够显著减少地面负担的节点。
+
+\begin{table}[H]
+\centering
+\caption{严格串行规则下主线策略与贪心耗尽策略的全 $K$ 对照}
+\label{tab:problem2-f-light-fullk}
+\begin{tabular}{ccccccc}
+\toprule
+$K$ & baseline/s & 主线策略/s & 串行贪心耗尽/s & 差值/s & 主线策略确认数 & 贪心确认数 \\
+\midrule
+1 & 5522.9 & 5252.7 & 5252.7 & 0.0 & 2 & 2 \\
+2 & 4748.1 & 4550.6 & 4550.6 & 0.0 & 2 & 2 \\
+3 & 4572.0 & 3799.1 & 3968.5 & -169.4 & 5 & 5 \\
+4 & 4533.2 & 3469.5 & 3486.3 & -16.8 & 7 & 7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+为避免只看总闭环时间，本文进一步对代表方案做补充评价，结果见表 \ref{tab:problem2-expanded-eval-fullk}。
+
+\begin{table}[H]
+\centering
+\caption{问题二代表方案在补充评价标准下的全 $K$ 对比}
+\label{tab:problem2-expanded-eval-fullk}
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{cccccc}
+\toprule
+$K$ & 方案 & 闭环时间/s & PriorityDirectRate & ManualServiceRatio & $\text{Score}_{+}$ \\
+\midrule
+1 & baseline & 5706.8 & 0.000 & 1.000 & 1.000 \\
+1 & 边际收益评分 & 5252.7 & 0.083 & 0.899 & 0.915 \\
+1 & 联合重排评分 & 5324.4 & 0.083 & 0.899 & 0.922 \\
+1 & 任务次数协同 & 5324.4 & 0.083 & 0.899 & 0.922 \\
+2 & baseline & 4798.0 & 0.000 & 1.000 & 1.000 \\
+2 & 边际收益评分 & 4550.6 & 0.056 & 0.910 & 0.940 \\
+2 & 联合重排评分 & 4685.1 & 0.028 & 0.955 & 0.971 \\
+2 & 任务次数协同 & 4550.6 & 0.056 & 0.910 & 0.940 \\
+3 & baseline & 4622.5 & 0.000 & 1.000 & 1.000 \\
+3 & 边际收益评分 & 3799.1 & 0.222 & 0.719 & 0.790 \\
+3 & 联合重排评分 & 3880.0 & 0.222 & 0.719 & 0.800 \\
+3 & 任务次数协同 & 3870.2 & 0.222 & 0.719 & 0.799 \\
+4 & baseline & 4538.7 & 0.000 & 1.000 & 1.000 \\
+4 & 边际收益评分 & 3469.5 & 0.333 & 0.607 & 0.708 \\
+4 & 联合重排评分 & 3550.1 & 0.333 & 0.607 & 0.718 \\
+4 & 任务次数协同 & 3540.7 & 0.333 & 0.607 & 0.717 \\
+\bottomrule
+\end{tabular}
+\normalsize
+\end{table}
+
+表 \ref{tab:problem2-expanded-eval-fullk} 把补充评价扩展到了全 $K$ 场景。低 $K$ 场景下，补充评价与原有排序保持一致，说明闭环时间仍是主导项；对 $K=3,4$，优先级覆盖率和人工负担指标进一步强化了对 $K=4$ 方案的综合支持。
+
+结合表 \ref{tab:problem2-joint-fullk}、表 \ref{tab:problem2-f-light-fullk} 和表 \ref{tab:problem2-expanded-eval-fullk} 可得本文的明确结论：问题二主线算法应采用\textbf{边际收益优先串行策略}，其综合表现优于串行贪心耗尽对照方案。
+
+\section{稳健性分析、评价与推广}
+
+\subsection{阈值灵敏度与补充评价}
+为检验直接确认阈值对闭环结果的影响，本文对倍率 $0.8,1.0,1.2,1.4$ 做了全 $K$ 扰动实验，结果见表 \ref{tab:problem2-threshold-best-fullk}。四个 $K$ 下的最优倍率均为 $0.8$，说明在当前数据结构下，适度放宽直接确认阈值比继续增加局部搜索复杂度更直接有效。
+
+\begin{table}[H]
+\centering
+\caption{直接确认阈值倍率灵敏度的全 $K$ 最优结果}
+\label{tab:problem2-threshold-best-fullk}
+\begin{tabular}{cccccc}
+\toprule
+$K$ & 最优倍率 & 最优闭环时间/s & 相比倍率 1.0 改进/s & 直接确认数 & 人工复核数 \\
+\midrule
+1 & 0.8 & 5196.7 & 56.0 & 2 & 14 \\
+2 & 0.8 & 4528.6 & 22.0 & 2 & 14 \\
+3 & 0.8 & 3504.0 & 295.1 & 7 & 9 \\
+4 & 0.8 & 3349.8 & 119.8 & 8 & 8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+除总闭环时间外，本文还用优先级加权直接确认率与人工服务时间占比做补充评价。结果表明，边际收益评分策略在全 $K$ 下均优于 baseline，其中 $K=4$ 时 PriorityDirectRate 提升至 0.333，ManualServiceRatio 降至 0.607。主线方案在高优先级覆盖与人工负担压缩两个维度上均表现稳定。
+
+\subsection{ALNS 扩展结果}
+在稳定主线基础上，本文最后使用 ALNS 做 destroy-repair 型联合搜索，以检验是否存在显著更优的任务粒度与确认结构。ALNS 搜索采用以总闭环时间为主、资源利用正则项为辅的接受指标
+
+\begin{equation}
+\Phi = T + \eta_E \cdot \mathrm{Pen}_E + \eta_T \cdot \mathrm{Pen}_T,
+\end{equation}
+
+其中 $T$ 为严格串行规则下的总闭环时间，$\mathrm{Pen}_E$ 与 $\mathrm{Pen}_T$ 分别表示能量利用和时长利用的附加惩罚项。指标 $\Phi$ 用于稳定搜索方向，最终结果仍按 $J_2$ 评价。全 $K$ 多种子结果见表 \ref{tab:problem2-alns-stability-fullk}。
+
+\begin{table}[H]
+\centering
+\caption{ALNS 在全 $K$ 下的多种子稳定性结果}
+\label{tab:problem2-alns-stability-fullk}
+\begin{tabular}{cccccc}
+\toprule
+$K$ & 种子数 & 最佳闭环时间/s & 最佳增益/s & 平均增益/s & 改进种子比例 \\
+\midrule
+1 & 3 & 5291.9 & 32.5 & 10.8 & 0.33 \\
+2 & 3 & 4545.2 & 5.4 & 1.8 & 0.33 \\
+3 & 3 & 3752.7 & 117.5 & 39.2 & 0.33 \\
+4 & 3 & 2997.6 & 543.1 & 328.6 & 1.00 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+表 \ref{tab:problem2-alns-stability-fullk} 说明，ALNS 的收益高度依赖 $K$。对 $K=1,2$，其改进幅度很小；对 $K=3$，已经能观察到更优结构，但稳定性一般；对 $K=4$，3 个种子全部优于主线基线，最佳结果把闭环时间压到 2997.6 s。这表明当前最值得继续深化的配置明确集中在 $K=4$。
+
+图 \ref{fig:problem2-k4-default-vs-alns} 给出了 $K=4$ 下主线策略路径与当前最优 ALNS 路径的对照。ALNS 通过重构任务粒度与直接确认结构，把 4 条较长任务重新组织为更短、更利于减少人工复核负担的局部任务链。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{outputs/figures/c_problem_problem2_k4_default_vs_alns_paths.png}
+\caption{$K=4$ 下主线策略路径与当前最优 ALNS 路径的对照图}
+\label{fig:problem2-k4-default-vs-alns}
+\end{figure}
+
+图 \ref{fig:problem2-k4-storyboard} 和图 \ref{fig:problem2-k4-diagnostics} 分别从方案对照和多指标诊断两个角度补充说明这一点。二者共同表明，$K=4$ 的最优 ALNS 解通过重构任务结构将 4 条较长任务调整为 8 条更短任务，同时将直接确认点数提升到 12 个，仅保留 4 个待人工复核点。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\linewidth]{outputs/figures/c_problem_problem2_k4_best_solution_storyboard.png}
+\caption{$K=4$ 下主线方案与 ALNS 当前最优解的对照}
+\label{fig:problem2-k4-storyboard}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\linewidth]{outputs/figures/c_problem_problem2_k4_best_solution_diagnostics.png}
+\caption{$K=4$ 当前最优解的多指标诊断图}
+\label{fig:problem2-k4-diagnostics}
+\end{figure}
+
+为统一展示不同求解层级之间的结果差异，本文进一步给出结果对照表，见表 \ref{tab:problem2-full-journey-rewrite}。
+
+\begin{table}[H]
+\centering
+\caption{问题二不同求解层级的结果对比}
+\label{tab:problem2-full-journey-rewrite}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{2.5cm}cc>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.8cm}}
+\toprule
+阶段 & $K=3$ 闭环时间/s & $K=4$ 闭环时间/s & 代表新增机制 & 备注 \\
+\midrule
+baseline 串行闭环 & 4572.0 & 4533.2 & 仅满足基础巡检时长 & 合规基线 \\
+主线串行策略 & 3799.1 & 3469.5 & 边际收益优先的追加悬停 + 地面统一重算 & 推荐方案 \\
+串行贪心耗尽对照 & 3968.5 & 3486.3 & 优先吃满空中余量 & 对照后不采用 \\
+交换算子增强 & 3785.5 & 3442.8 & 跨任务单点交换 & 局部增强 \\
+阈值敏感性最优 & 3504.0 & 3349.8 & $\text{multiplier}=0.8$ & 参数支线最优 \\
+ALNS 扩展最优 & 3752.7 & 2997.6 & destroy-repair 联合搜索 & 结果上界 \\
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{table}
+
+ALNS 结果用于刻画扩展搜索可达到的更优上界，主线推荐方案仍采用满足题意约束且稳定性更强的边际收益优先串行策略。
+
+\subsection{管理启示}
+结合问题一与问题二的全 $K$ 结果，本文得到三条较稳定的管理启示。第一，$K$ 的增加能够持续缩短空中阶段完工时间，而闭环收益主要集中在 $K=3$ 到 $K=4$；第二，在严格串行物业规则下，空中资源配置应优先服务于地面代价较高的节点，因为对 $K=3,4$，串行贪心耗尽分别比主线策略差 169.4 s 和 16.8 s；第三，若社区管理制度允许调整直接确认阈值，则倍率 $0.8$ 在当前数据下对应最优闭环结果。
+
+从工程决策角度看，$K=4$ 的边际收益优先串行联合求解可作为推荐配置；交换增强、阈值灵敏度优化和 ALNS 分别对应局部改进、参数调整与结果上界探索三类扩展手段。
+
+\subsection{模型评价与推广}
+从模型构造、实验验证与工程应用三个角度看，本文方案具备较强的完整性与可推广性，模型的优势、局限与推广价值概括如下。
+
+\subsubsection{模型优势}
+\begin{enumerate}
+	\item 问题一与问题二都覆盖全 $K$ 配置，保证模型表达与结果展示在各类资源配置下保持一致；
+	\item 论文中明确区分合规主线、对照失败项和扩展搜索结果，使推荐方案与探索上界各有归属；
+	\item 代码与论文表述一一对应，所有主表与主图均可追溯到统一计算流程，具备较强复现实验能力。
+\end{enumerate}
+
+\subsubsection{模型局限}
+\begin{enumerate}
+	\item 当前补充评价标准已能反映优先级覆盖与人工负担，但高优先级点的直接确认率仍有进一步提升空间；
+	\item 串行贪心耗尽对 $K=3,4$ 未产生进一步改善，说明问题二的关键仍在边际收益判断与任务结构设计；
+	\item 当前模型仍是静态确定性模型，尚未纳入飞行时间波动、临时故障与动态重规划等因素。
+\end{enumerate}
+
+\subsubsection{后续推广方向}
+后续研究可围绕优先级敏感的状态评分重构、更稳定的 ALNS destroy-repair 设计以及地面复核路径精化展开，并在统一联合求解框架下保持物业统一出发约束。该方向既能保留当前版本的可解释性，也能为更一般的智慧社区空地协同巡检问题提供可迁移的建模模板。
+
+\section{结论}
+本文围绕\textbf{智慧社区多无人机-物业人员联合巡检}问题，构建了从空中巡检路径规划到直接确认与地面复核闭环优化的完整建模与求解框架，并在全 $K$ 配置下完成了结果比较与扩展验证。
+
+图 \ref{fig:conclusion-k4-storyboard} 汇总了本文最具代表性的 $K=4$ 配置结果：左上角给出从 baseline、主线串行策略、交换增强、阈值优化到 ALNS 扩展搜索的闭环时间下降过程，右上角展示直接确认节点与人工复核节点数量的结构变化，下方则对比了主线方案与 ALNS 当前最优解的节点状态分布。该图能够直观说明本文最终结论的三个核心事实：其一，$K=4$ 是当前数据下最具综合优势的资源配置；其二，主线串行策略已经能够稳定降低闭环时间；其三，ALNS 主要通过重构任务粒度与确认结构进一步压缩人工复核负担。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.96\linewidth]{outputs/figures/c_problem_problem2_k4_best_solution_storyboard.png}
+\caption{$K=4$ 配置下主线方案与扩展最优结果的综合对比图}
+\label{fig:conclusion-k4-storyboard}
+\end{figure}
+
+问题一方面，本文将\textbf{任务划分}、\textbf{访问顺序}和\textbf{悬停时间分配}统一纳入空中巡检优化模型，分别采用\textbf{构造式贪心}与\textbf{层次滚动重构}进行求解。结果表明，构造式贪心在 \textbf{$K=1,2,3$} 下更优，层次滚动重构在 \textbf{$K=4$} 下更优；随着无人机数量增加，空中阶段最大完工时长由 \textbf{1312.2 s} 压缩至 \textbf{303.4 s}，说明合理的多机分工与任务切分能够显著提升巡检效率。
+
+问题二方面，在严格遵守\textbf{物业人员须待全部无人机返航后统一出发}这一合规约束的前提下，本文建立了融合\textbf{直接确认判定}、\textbf{地面复核路径重算}与\textbf{局部增强搜索}的联合闭环方法。实验表明，\textbf{边际收益优先串行策略}在 \textbf{$K=3,4$} 下分别优于串行贪心耗尽策略 \textbf{169.4 s} 和 \textbf{16.8 s}，表明闭环优化依赖于将有限悬停资源优先配置给能够显著减少地面负担的节点。
+
+综合全配置结果，\textbf{$K=4$} 是兼顾巡检效率、资源投入与闭环效果的最优选择。若强调\textbf{稳健性}、\textbf{合规性}与\textbf{可复现性}，推荐采用 \textbf{$K=4$ 的边际收益优先串行联合求解主线}，此时总闭环时间可降至 \textbf{3469.5 s}；若允许调参，则阈值倍率 \textbf{$0.8$} 可将其压缩至 \textbf{3349.8 s}；若进一步追求更优结果上界，则 \textbf{ALNS} 可将总闭环时间压缩至 \textbf{2997.6 s}。总体来看，本文模型不仅完成了题目要求的建模、求解与评价，也为智慧社区\textbf{空地协同巡检}方案设计提供了具有可解释性与可操作性的定量依据。
+
+\section*{参考文献}
+\addcontentsline{toc}{section}{参考文献}
+\begin{thebibliography}{99}
+\bibitem{r1} 李明奇、覃思义，数学建模方法与实践，北京：科学出版社，2021.9。
+\bibitem{r2} Toth P, Vigo D, Vehicle Routing: Problems, Methods, and Applications, Philadelphia: SIAM, 2014, 2nd ed.
+\bibitem{r3} Ropke S, Pisinger D, An Adaptive Large Neighborhood Search Heuristic for the Pickup and Delivery Problem with Time Windows, Transportation Science, 40(4): 455--472, 2006.
+\bibitem{r4} Dorigo M, Stutzle T, Ant Colony Optimization, Cambridge: MIT Press, 2004, 1st ed.
+\bibitem{r5} Kennedy J, Eberhart R, Particle Swarm Optimization, Proceedings of ICNN'95 - International Conference on Neural Networks, 4: 1942--1948, 1995.
+\bibitem{r6} Holland J H, Adaptation in Natural and Artificial Systems, Ann Arbor: University of Michigan Press, 1975, 1st ed.
+\end{thebibliography}
+
+\end{document}
