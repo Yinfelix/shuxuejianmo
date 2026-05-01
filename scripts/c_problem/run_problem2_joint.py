@@ -126,6 +126,7 @@ def _build_node_state(problem1_detail: pd.DataFrame, nodes: pd.DataFrame) -> pd.
                 "node_id",
                 "drone_id",
                 "route_id",
+                "route_order",
                 "hover_time_s",
                 "route_duration_s",
                 "route_energy_j",
@@ -186,15 +187,27 @@ def _ground_path(manual_point_ids: list[str], ground_time: pd.DataFrame) -> list
     return best
 
 
-def _ground_stage_metrics(manual_points: pd.DataFrame, manual_point_ids: list[str], ground_time: pd.DataFrame) -> tuple[float, float, float, list[str]]:
+def _ground_stage_metrics(
+    node_state: pd.DataFrame,
+    manual_points: pd.DataFrame,
+    manual_point_ids: list[str],
+    ground_time: pd.DataFrame,
+    air_completion_time_s: float,
+    ground_mode: str,
+    battery_swap_time_s: float,
+) -> tuple[float, float, float, float, float, list[str]]:
+    del node_state, ground_mode, battery_swap_time_s
     if not manual_point_ids:
-        return 0.0, 0.0, 0.0, [MANUAL_DEPOT_ID, MANUAL_DEPOT_ID]
+        return 0.0, 0.0, 0.0, 0.0, 0.0, [MANUAL_DEPOT_ID, MANUAL_DEPOT_ID]
+
     path = _ground_path(manual_point_ids, ground_time)
     travel_time_s = _ground_travel_time(path, ground_time)
     service_time_s = float(
         manual_points.loc[manual_points["manual_point_id"].isin(manual_point_ids), "manual_service_time_s"].sum()
     )
-    return travel_time_s + service_time_s, travel_time_s, service_time_s, path
+
+    finish_time_s = air_completion_time_s + travel_time_s + service_time_s
+    return finish_time_s, travel_time_s, service_time_s, 0.0, air_completion_time_s, path
 
 
 def optimize_ground_review_path(ground_time: pd.DataFrame, manual_point_ids: list[str], method: str = "two_opt") -> tuple[list[str], float]:
@@ -227,33 +240,45 @@ def _summarize_node_state(
     drone_count: int,
     solution_type: str,
     selected_nodes: list[str],
+    ground_mode: str = "serial",
+    battery_swap_time_s: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     detail = node_state.copy().reset_index(drop=True)
     detail["solution_type"] = solution_type
     detail["selected_by_guidance"] = detail["node_id"].astype(str).isin(set(str(node_id) for node_id in selected_nodes))
+    resolved_ground_mode = "serial"
 
-    manual_point_ids = detail.loc[~detail["direct_confirmed"], "manual_point_id"].dropna().astype(str).tolist()
-    ground_stage_time_s, ground_travel_time_s, ground_service_time_s, ground_path = _ground_stage_metrics(
-        manual_points,
-        manual_point_ids,
-        ground_time,
-    )
     air_completion_time_s = float(detail[["drone_id", "drone_total_time_s"]].drop_duplicates()["drone_total_time_s"].max()) if not detail.empty else 0.0
+    manual_point_ids = detail.loc[~detail["direct_confirmed"], "manual_point_id"].dropna().astype(str).tolist()
+    ground_completion_time_s, ground_travel_time_s, ground_service_time_s, ground_wait_time_s, ground_start_time_s, ground_path = _ground_stage_metrics(
+        node_state=detail,
+        manual_points=manual_points,
+        manual_point_ids=manual_point_ids,
+        ground_time=ground_time,
+        air_completion_time_s=air_completion_time_s,
+        ground_mode=resolved_ground_mode,
+        battery_swap_time_s=battery_swap_time_s,
+    )
     route_energy_table = detail[["drone_id", "route_id", "route_energy_j"]].drop_duplicates()
     total_air_energy_j = float(route_energy_table["route_energy_j"].sum()) if not route_energy_table.empty else 0.0
     total_hover_time_s = float(detail["allocated_hover_time_s"].sum()) if not detail.empty else 0.0
     base_hover_sum = float(pd.to_numeric(detail["base_hover_time_s"], errors="coerce").fillna(0.0).sum()) if "base_hover_time_s" in detail.columns else total_hover_time_s
     direct_confirm_count = int(detail["direct_confirmed"].sum()) if not detail.empty else 0
+    total_closed_loop_time_s = ground_completion_time_s
     summary = pd.DataFrame(
         [
             {
                 "drone_count": drone_count,
                 "solution_type": solution_type,
                 "air_completion_time_s": air_completion_time_s,
-                "ground_completion_time_s": ground_stage_time_s,
+                "ground_completion_time_s": ground_completion_time_s,
+                "ground_stage_duration_s": ground_travel_time_s + ground_service_time_s,
                 "ground_travel_time_s": ground_travel_time_s,
                 "ground_service_time_s": ground_service_time_s,
-                "total_closed_loop_time_s": air_completion_time_s + ground_stage_time_s,
+                "ground_wait_time_s": ground_wait_time_s,
+                "ground_start_time_s": ground_start_time_s,
+                "ground_mode": resolved_ground_mode,
+                "total_closed_loop_time_s": total_closed_loop_time_s,
                 "direct_confirm_count": direct_confirm_count,
                 "direct_confirm_ratio": direct_confirm_count / len(detail) if len(detail) else 0.0,
                 "manual_review_count": int((~detail["direct_confirmed"]).sum()) if not detail.empty else 0,
@@ -591,9 +616,18 @@ def solve_problem2(threshold_multiplier: float = 1.0, enable_swap: bool = False)
             remaining_manual_points = target_df.loc[
                 target_df["node_id"].isin(remaining_nodes), "manual_point_id"
             ].dropna().astype(str).tolist()
-            current_ground_time_s, _, _, _ = _ground_stage_metrics(data.manual_points, remaining_manual_points, data.ground_time)
             current_air_makespan_s = max(state.total_time_s for state in drone_states.values())
-            current_closed_loop_s = current_air_makespan_s + current_ground_time_s
+            _, current_ground_travel_time_s, current_ground_service_time_s, _, _, _ = _ground_stage_metrics(
+                node_state=target_df,
+                manual_points=data.manual_points,
+                manual_point_ids=remaining_manual_points,
+                ground_time=data.ground_time,
+                air_completion_time_s=current_air_makespan_s,
+                ground_mode="serial",
+                battery_swap_time_s=battery_swap_time_s,
+            )
+            current_ground_stage_duration_s = current_ground_travel_time_s + current_ground_service_time_s
+            current_closed_loop_s = current_air_makespan_s + current_ground_stage_duration_s
             best_action: CandidateAction | None = None
 
             for row in target_df.itertuples(index=False):
@@ -606,7 +640,16 @@ def solve_problem2(threshold_multiplier: float = 1.0, enable_swap: bool = False)
                     continue
 
                 new_manual_points = [point_id for point_id in remaining_manual_points if point_id != str(row.manual_point_id)]
-                new_ground_time_s, _, _, _ = _ground_stage_metrics(data.manual_points, new_manual_points, data.ground_time)
+                _, new_ground_travel_time_s, new_ground_service_time_s, _, _, _ = _ground_stage_metrics(
+                    node_state=target_df,
+                    manual_points=data.manual_points,
+                    manual_point_ids=new_manual_points,
+                    ground_time=data.ground_time,
+                    air_completion_time_s=current_air_makespan_s,
+                    ground_mode="serial",
+                    battery_swap_time_s=battery_swap_time_s,
+                )
+                new_ground_stage_duration_s = new_ground_travel_time_s + new_ground_service_time_s
 
                 located = _route_for_node(drone_states, node_id)
                 if located is not None:
@@ -619,7 +662,7 @@ def solve_problem2(threshold_multiplier: float = 1.0, enable_swap: bool = False)
                         hover_power,
                         energy_limit,
                         horizon,
-                        new_ground_time_s,
+                        new_ground_stage_duration_s,
                         current_closed_loop_s,
                         drone_states,
                     )
@@ -637,7 +680,7 @@ def solve_problem2(threshold_multiplier: float = 1.0, enable_swap: bool = False)
                         horizon,
                         data.flight_time,
                         data.flight_energy,
-                        new_ground_time_s,
+                        new_ground_stage_duration_s,
                         current_closed_loop_s,
                         drone_states,
                     )
@@ -655,11 +698,17 @@ def solve_problem2(threshold_multiplier: float = 1.0, enable_swap: bool = False)
 
         manual_nodes = sorted(set(int(node_id) for node_id in target_df["node_id"]) - confirmed_nodes)
         manual_point_ids = target_df.loc[target_df["node_id"].isin(manual_nodes), "manual_point_id"].dropna().astype(str).tolist()
-        ground_stage_time_s, ground_travel_time_s, ground_service_time_s, ground_path = _ground_stage_metrics(
-            data.manual_points,
-            manual_point_ids,
-            data.ground_time,
+        air_stage_time_s = max(state.total_time_s for state in drone_states.values())
+        ground_completion_time_s, ground_travel_time_s, ground_service_time_s, _, ground_start_time_s, ground_path = _ground_stage_metrics(
+            node_state=target_df,
+            manual_points=data.manual_points,
+            manual_point_ids=manual_point_ids,
+            ground_time=data.ground_time,
+            air_completion_time_s=air_stage_time_s,
+            ground_mode="serial",
+            battery_swap_time_s=battery_swap_time_s,
         )
+        ground_stage_time_s = ground_travel_time_s + ground_service_time_s
         swap_move_count = 0
         swap_improvement_s = 0.0
         if enable_swap:
@@ -672,8 +721,10 @@ def solve_problem2(threshold_multiplier: float = 1.0, enable_swap: bool = False)
                 data.flight_time,
                 data.flight_energy,
             )
-        air_stage_time_s = max(state.total_time_s for state in drone_states.values())
-        closed_loop_time_s = air_stage_time_s + ground_stage_time_s
+            air_stage_time_s = max(state.total_time_s for state in drone_states.values())
+            ground_completion_time_s = air_stage_time_s + ground_stage_time_s
+            ground_start_time_s = air_stage_time_s
+        closed_loop_time_s = ground_completion_time_s
         total_hover_time_s = sum(sum(route.hover_times_s.values()) for state in drone_states.values() for route in state.routes)
         total_air_energy_j = sum(route.energy_j for state in drone_states.values() for route in state.routes)
 
@@ -687,6 +738,8 @@ def solve_problem2(threshold_multiplier: float = 1.0, enable_swap: bool = False)
                 "ground_stage_time_s": ground_stage_time_s,
                 "ground_travel_time_s": ground_travel_time_s,
                 "ground_service_time_s": ground_service_time_s,
+                "ground_start_time_s": ground_start_time_s,
+                "ground_completion_time_s": ground_completion_time_s,
                 "closed_loop_time_s": closed_loop_time_s,
                 "closed_loop_time_min": closed_loop_time_s / 60.0,
                 "direct_confirm_count": len(confirmed_nodes),

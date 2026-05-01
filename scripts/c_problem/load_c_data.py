@@ -40,14 +40,50 @@ def _load_matrix(workbook: Path, sheet_name: str) -> pd.DataFrame:
     return matrix.apply(pd.to_numeric, errors="coerce")
 
 
+def _coerce_numeric_value(value: object) -> float | None:
+    if pd.isna(value):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return None
+    return float(numeric)
+
+
+def _first_numeric_param_value(params: pd.DataFrame, parameter_name: str) -> float | None:
+    matches = params.loc[params["parameter"] == parameter_name, "value"]
+    for value in matches:
+        numeric = _coerce_numeric_value(value)
+        if numeric is not None:
+            return numeric
+    return None
+
+
 def _fill_effective_energy_limit(params: pd.DataFrame) -> pd.DataFrame:
     params = params.copy()
     effective_mask = params["parameter"] == "effective_energy_limit_J"
-    if effective_mask.any() and pd.isna(params.loc[effective_mask, "value"]).all():
-        battery_match = params.loc[params["parameter"] == "battery_capacity_J", "value"]
-        reserve_match = params.loc[params["parameter"] == "safety_reserve_J", "value"]
-        if not battery_match.empty and not reserve_match.empty:
-            params.loc[effective_mask, "value"] = float(battery_match.iloc[0]) - float(reserve_match.iloc[0])
+    if effective_mask.any():
+        explicit_values = params.loc[effective_mask, "value"].map(_coerce_numeric_value)
+        if explicit_values.notna().any():
+            params.loc[effective_mask, "value"] = explicit_values
+            return params
+
+    battery_capacity = _first_numeric_param_value(params, "battery_capacity_J")
+    safety_reserve = _first_numeric_param_value(params, "safety_reserve_J")
+    if battery_capacity is None or safety_reserve is None:
+        return params
+
+    fallback_value = battery_capacity - safety_reserve
+    if effective_mask.any():
+        params.loc[effective_mask, "value"] = fallback_value
+    else:
+        params.loc[len(params)] = {
+            "parameter": "effective_energy_limit_J",
+            "value": fallback_value,
+        }
     return params
 
 
@@ -188,7 +224,7 @@ def load_c_problem_data(workbook: Path | None = None) -> CProblemData:
 
 
 def parameter_value(params: pd.DataFrame, parameter_name: str, default: float | None = None) -> float | None:
-    match = params.loc[params["parameter"] == parameter_name, "value"]
-    if match.empty:
+    value = _first_numeric_param_value(params, parameter_name)
+    if value is None:
         return default
-    return float(match.iloc[0])
+    return value

@@ -34,7 +34,7 @@ def _table_payload(frame: pd.DataFrame, digits: int = 1) -> dict[str, list]:
 
 def _build_problem2_journey_rows() -> pd.DataFrame:
     round1 = _read_csv(OUTPUT_DIR / "c_problem_problem2_algorithm_compare.csv")
-    f_guidance = _read_csv(OUTPUT_DIR / "c_problem_problem2_f_guidance_compare.csv")
+    serial_compare = _read_csv(OUTPUT_DIR / "c_problem_problem2_serial_greedy_compare.csv")
     joint = _read_csv(OUTPUT_DIR / "c_problem_problem2_joint_summary.csv")
     swap = _read_csv(OUTPUT_DIR / "c_problem_problem2_swap_summary.csv")
     threshold = _read_csv(OUTPUT_DIR / "c_problem_problem2_threshold_sensitivity_summary.csv")
@@ -49,7 +49,7 @@ def _build_problem2_journey_rows() -> pd.DataFrame:
         round1_slice = round1.loc[
             (round1["drone_count"] == drone_count) & (round1["solution_type"] == "ga_hover")
         ].iloc[0]
-        f_slice = f_guidance.loc[f_guidance["drone_count"] == drone_count].iloc[0]
+        serial_slice = serial_compare.loc[serial_compare["drone_count"] == drone_count].iloc[0]
         joint_slice = joint.loc[joint["drone_count"] == drone_count].iloc[0]
         swap_slice = swap.loc[
             (swap["drone_count"] == drone_count) & (swap["method"] == "joint_with_swap")
@@ -73,16 +73,27 @@ def _build_problem2_journey_rows() -> pd.DataFrame:
                 "drone_count": drone_count,
                 "stage_order": 2,
                 "stage_group": "mainline",
-                "stage_label": "统一 F 引导基线",
-                "closed_loop_time_s": float(f_slice["f_default_s"]),
-                "direct_confirm_count": int(f_slice["f_default_direct_confirm_count"]),
-                "manual_review_count": target_count - int(f_slice["f_default_direct_confirm_count"]),
-                "aux_param": "default_F",
-                "source_file": "c_problem_problem2_f_guidance_compare.csv",
+                "stage_label": "旧默认串行策略",
+                "closed_loop_time_s": float(serial_slice["old_default_total_closed_loop_s"]),
+                "direct_confirm_count": int(serial_slice["old_default_direct_confirm_count"]),
+                "manual_review_count": int(serial_slice["old_default_manual_review_count"]),
+                "aux_param": "serial_default",
+                "source_file": "c_problem_problem2_serial_greedy_compare.csv",
             },
             {
                 "drone_count": drone_count,
                 "stage_order": 3,
+                "stage_group": "contrast",
+                "stage_label": "串行贪心耗尽对照",
+                "closed_loop_time_s": float(serial_slice["serial_greedy_total_closed_loop_s"]),
+                "direct_confirm_count": int(serial_slice["serial_greedy_direct_confirm_count"]),
+                "manual_review_count": int(serial_slice["serial_greedy_manual_review_count"]),
+                "aux_param": "resource_exhaustion",
+                "source_file": "c_problem_problem2_serial_greedy_compare.csv",
+            },
+            {
+                "drone_count": drone_count,
+                "stage_order": 4,
                 "stage_group": "mainline",
                 "stage_label": "当前联合求解器",
                 "closed_loop_time_s": float(joint_slice["closed_loop_time_s"]),
@@ -93,7 +104,7 @@ def _build_problem2_journey_rows() -> pd.DataFrame:
             },
             {
                 "drone_count": drone_count,
-                "stage_order": 4,
+                "stage_order": 5,
                 "stage_group": "local_search",
                 "stage_label": "交换算子增强",
                 "closed_loop_time_s": float(swap_slice["closed_loop_time_s"]),
@@ -104,7 +115,7 @@ def _build_problem2_journey_rows() -> pd.DataFrame:
             },
             {
                 "drone_count": drone_count,
-                "stage_order": 5,
+                "stage_order": 6,
                 "stage_group": "sensitivity_branch",
                 "stage_label": "阈值敏感性最优",
                 "closed_loop_time_s": float(threshold_slice["closed_loop_time_s"]),
@@ -115,7 +126,7 @@ def _build_problem2_journey_rows() -> pd.DataFrame:
             },
             {
                 "drone_count": drone_count,
-                "stage_order": 6,
+                "stage_order": 7,
                 "stage_group": "alns_branch",
                 "stage_label": "ALNS 当前最优",
                 "closed_loop_time_s": float(alns_slice["optimized_total_closed_loop_s"]),
@@ -133,7 +144,7 @@ def _build_problem2_journey_rows() -> pd.DataFrame:
             stage_rows.append(
                 {
                     "drone_count": drone_count,
-                    "stage_order": 7,
+                    "stage_order": 8,
                     "stage_group": "alns_validation",
                     "stage_label": "ALNS deeper复验",
                     "closed_loop_time_s": float(deeper_slice["optimized_total_closed_loop_s"]),
@@ -160,7 +171,7 @@ def _build_problem2_journey_rows() -> pd.DataFrame:
 def build_outputs() -> tuple[Path, Path]:
     problem1 = _read_csv(OUTPUT_DIR / "c_problem_problem1_method_comparison.csv")
     round1 = _read_csv(OUTPUT_DIR / "c_problem_problem2_algorithm_compare.csv")
-    f_guidance = _read_csv(OUTPUT_DIR / "c_problem_problem2_f_guidance_compare.csv")
+    serial_compare = _read_csv(OUTPUT_DIR / "c_problem_problem2_serial_greedy_compare.csv")
     joint = _read_csv(OUTPUT_DIR / "c_problem_problem2_joint_summary.csv")
     threshold = _read_csv(OUTPUT_DIR / "c_problem_problem2_threshold_sensitivity_summary.csv")
     swap_compare = _read_csv(OUTPUT_DIR / "c_problem_problem2_swap_comparison.csv")
@@ -184,7 +195,7 @@ def build_outputs() -> tuple[Path, Path]:
             "source_files": [
                 "c_problem_problem1_method_comparison.csv",
                 "c_problem_problem2_algorithm_compare.csv",
-                "c_problem_problem2_f_guidance_compare.csv",
+                "c_problem_problem2_serial_greedy_compare.csv",
                 "c_problem_problem2_joint_summary.csv",
                 "c_problem_problem2_threshold_sensitivity_summary.csv",
                 "c_problem_problem2_swap_comparison.csv",
@@ -230,7 +241,7 @@ def build_outputs() -> tuple[Path, Path]:
                 "direct_confirm_count",
                 "manual_review_count",
             ]], digits=2),
-            "problem2_f_guidance_compare": _table_payload(f_guidance, digits=2),
+            "problem2_serial_compare": _table_payload(serial_compare, digits=2),
             "problem2_current_joint": _table_payload(joint, digits=2),
             "problem2_threshold_best": _table_payload(best_threshold, digits=2),
             "problem2_swap_compare": _table_payload(swap_compare, digits=2),

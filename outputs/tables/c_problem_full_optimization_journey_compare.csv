@@ -1,14 +1,16 @@
 ﻿drone_count,stage_order,stage_group,stage_label,closed_loop_time_s,direct_confirm_count,manual_review_count,aux_param,source_file,gain_vs_first_s,gain_vs_first_pct,gain_vs_previous_s
 3,1,legacy,首轮 GA 选点闭环,4112.217248460866,4,12,seed=11,c_problem_problem2_algorithm_compare.csv,0.0,0.0,
-3,2,mainline,统一 F 引导基线,3870.1861290015713,5,11,default_F,c_problem_problem2_f_guidance_compare.csv,242.03111945929504,5.885659848099786,242.03111945929504
-3,3,mainline,当前联合求解器,3799.052337930042,5,11,threshold=1.0,c_problem_problem2_joint_summary.csv,313.1649105308243,7.615475827500033,71.13379107152923
-3,4,local_search,交换算子增强,3785.4672603446434,5,11,swap_moves=4,c_problem_problem2_swap_summary.csv,326.749988116223,7.945834774136021,13.585077585398722
-3,5,sensitivity_branch,阈值敏感性最优,3503.969084206893,7,9,multiplier=0.8,c_problem_problem2_threshold_sensitivity_summary.csv,608.2481642539733,14.791245877917328,281.4981761377503
-3,6,alns_branch,ALNS 当前最优,3752.658008177992,6,10,seed=11,c_problem_problem2_alns_joint_compare.csv,359.55924028287427,8.743682995285603,-248.68892397109903
+3,2,mainline,旧默认串行策略,3799.052337930042,5,11,serial_default,c_problem_problem2_serial_greedy_compare.csv,313.1649105308243,7.615475827500033,313.1649105308243
+3,3,contrast,串行贪心耗尽对照,3968.4503964354735,5,11,resource_exhaustion,c_problem_problem2_serial_greedy_compare.csv,143.76685202539284,3.4960908760159093,-169.39805850543144
+3,4,mainline,当前联合求解器,3799.052337930042,5,11,threshold=1.0,c_problem_problem2_joint_summary.csv,313.1649105308243,7.615475827500033,169.39805850543144
+3,5,local_search,交换算子增强,3785.4672603446434,5,11,swap_moves=4,c_problem_problem2_swap_summary.csv,326.749988116223,7.945834774136021,13.585077585398722
+3,6,sensitivity_branch,阈值敏感性最优,3503.969084206893,7,9,multiplier=0.8,c_problem_problem2_threshold_sensitivity_summary.csv,608.2481642539733,14.791245877917328,281.4981761377503
+3,7,alns_branch,ALNS 当前最优,3752.658008177992,6,10,seed=11,c_problem_problem2_alns_joint_compare.csv,359.55924028287427,8.743682995285603,-248.68892397109903
 4,1,legacy,首轮 GA 选点闭环,3693.090340150901,6,10,seed=11,c_problem_problem2_algorithm_compare.csv,0.0,0.0,
-4,2,mainline,统一 F 引导基线,3540.6685990788646,7,9,default_F,c_problem_problem2_f_guidance_compare.csv,152.42174107203618,4.127213987021183,152.42174107203618
-4,3,mainline,当前联合求解器,3469.5348080073354,7,9,threshold=1.0,c_problem_problem2_joint_summary.csv,223.55553214356542,6.053345885235801,71.13379107152923
-4,4,local_search,交换算子增强,3442.7845121173127,7,9,swap_moves=2,c_problem_problem2_swap_summary.csv,250.3058280335881,6.777679530670796,26.7502958900227
-4,5,sensitivity_branch,阈值敏感性最优,3349.76676454734,8,8,multiplier=0.8,c_problem_problem2_threshold_sensitivity_summary.csv,343.32357560356104,9.29637631311052,93.01774756997293
-4,6,alns_branch,ALNS 当前最优,2997.56007301714,12,4,seed=23,c_problem_problem2_alns_joint_compare.csv,695.5302671337608,18.83328603072681,352.2066915301998
-4,7,alns_validation,ALNS deeper复验,3077.439874931161,11,5,"seed=37,iter=12",c_problem_problem2_alns_joint_compare_adaptive_deeper_seed37.csv,615.65046521974,16.670333203779258,-79.87980191402085
+4,2,mainline,旧默认串行策略,3469.5348080073354,7,9,serial_default,c_problem_problem2_serial_greedy_compare.csv,223.55553214356542,6.053345885235801,223.55553214356542
+4,3,contrast,串行贪心耗尽对照,3486.3478197531585,7,9,resource_exhaustion,c_problem_problem2_serial_greedy_compare.csv,206.74252039774228,5.598089983070783,-16.813011745823133
+4,4,mainline,当前联合求解器,3469.5348080073354,7,9,threshold=1.0,c_problem_problem2_joint_summary.csv,223.55553214356542,6.053345885235801,16.813011745823133
+4,5,local_search,交换算子增强,3442.7845121173127,7,9,swap_moves=2,c_problem_problem2_swap_summary.csv,250.3058280335881,6.777679530670796,26.7502958900227
+4,6,sensitivity_branch,阈值敏感性最优,3349.76676454734,8,8,multiplier=0.8,c_problem_problem2_threshold_sensitivity_summary.csv,343.32357560356104,9.29637631311052,93.01774756997293
+4,7,alns_branch,ALNS 当前最优,2997.56007301714,12,4,seed=23,c_problem_problem2_alns_joint_compare.csv,695.5302671337608,18.83328603072681,352.2066915301998
+4,8,alns_validation,ALNS deeper复验,3077.439874931161,11,5,"seed=37,iter=12",c_problem_problem2_alns_joint_compare_adaptive_deeper_seed37.csv,615.65046521974,16.670333203779258,-79.87980191402085

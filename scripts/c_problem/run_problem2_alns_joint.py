@@ -24,6 +24,8 @@ ALNS_COOLING = float(os.environ.get("ALNS_COOLING", "0.90"))
 ALNS_MIN_TEMPERATURE = float(os.environ.get("ALNS_MIN_TEMPERATURE", "1.0"))
 ALNS_DRONE_COUNTS = [int(value) for value in os.environ.get("ALNS_DRONE_COUNTS", "1,2,3,4").split(",") if value.strip()]
 ALNS_OUTPUT_TAG = os.environ.get("ALNS_OUTPUT_TAG", "").strip()
+ALNS_GROUND_MODE = "serial"
+ALNS_PREFER_RESOURCE_EXHAUSTION = os.environ.get("ALNS_PREFER_RESOURCE_EXHAUSTION", "0").strip().lower() in {"1", "true", "yes", "on"}
 ALNS_STAGE_SPLITS = (0.34, 0.67)
 ALNS_STAGE_WEIGHT_PRESETS = {
     "explore": {
@@ -362,6 +364,8 @@ def _run_alns(
     hover_power: float,
     battery_swap_time: float,
     seed: int,
+    ground_mode: str,
+    prefer_resource_exhaustion: bool,
 ):
     run_started_at = time.perf_counter()
     rng = Random(seed + drone_count)
@@ -390,6 +394,8 @@ def _run_alns(
         battery_swap_time=battery_swap_time,
         move_tag="original",
         solution_type="alns_joint",
+        ground_mode=ground_mode,
+        prefer_resource_exhaustion=prefer_resource_exhaustion,
     )
     if current is None:
         raise RuntimeError(f"Initial route plan for drone_count={drone_count} is infeasible")
@@ -440,6 +446,8 @@ def _run_alns(
             battery_swap_time=battery_swap_time,
             move_tag=f"alns_{destroy_name}",
             solution_type="alns_joint",
+            ground_mode=ground_mode,
+            prefer_resource_exhaustion=prefer_resource_exhaustion,
         )
         if candidate is None:
             destroy_weights[method_name] = max(0.2, destroy_weights[method_name] * 0.95)
@@ -510,6 +518,8 @@ def main() -> None:
             battery_swap_time=battery_swap_time,
             move_tag="original",
             solution_type="alns_joint",
+            ground_mode=ALNS_GROUND_MODE,
+            prefer_resource_exhaustion=ALNS_PREFER_RESOURCE_EXHAUSTION,
         )
         if original is None:
             raise RuntimeError(f"Initial route plan for drone_count={drone_count} is infeasible")
@@ -527,6 +537,8 @@ def main() -> None:
                 hover_power=hover_power,
                 battery_swap_time=battery_swap_time,
                 seed=seed,
+                ground_mode=ALNS_GROUND_MODE,
+                prefer_resource_exhaustion=ALNS_PREFER_RESOURCE_EXHAUSTION,
             )
             best_detail = best["detail"].copy()
             best_detail["seed"] = seed
@@ -551,6 +563,9 @@ def main() -> None:
                 "optimized_avg_route_energy_utilization": best["avg_route_energy_utilization"],
                 "optimized_min_route_energy_utilization": best["min_route_energy_utilization"],
                 "energy_penalty": best["energy_penalty"],
+                "time_penalty": best["time_penalty"],
+                "ground_mode": ALNS_GROUND_MODE,
+                "prefer_resource_exhaustion": ALNS_PREFER_RESOURCE_EXHAUSTION,
                 "final_move_tag": best["move_tag"],
                 "accepted_move_count": len(accepted_history) - 1,
                 "runtime_s": runtime_s,
@@ -590,6 +605,8 @@ def main() -> None:
                 "best_move_tag": best_run_row["final_move_tag"] if best_run_row is not None else "original",
                 "best_optimized_route_count": int(best_run_row["optimized_route_count"]) if best_run_row is not None else int(original["route_count"]),
                 "best_direct_confirm_count": int(best_run_row["optimized_direct_confirm_count"]) if best_run_row is not None else int(original["summary"].loc[0, "direct_confirm_count"]),
+                "ground_mode": ALNS_GROUND_MODE,
+                "prefer_resource_exhaustion": ALNS_PREFER_RESOURCE_EXHAUSTION,
                 "search_method": "alns",
             }
         )

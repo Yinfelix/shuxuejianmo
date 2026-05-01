@@ -1,0 +1,2 @@
+﻿drone_count,seed_count,original_total_closed_loop_s,best_optimized_total_closed_loop_s,mean_optimized_total_closed_loop_s,std_optimized_total_closed_loop_s,best_gain_vs_original_s,mean_gain_vs_original_s,std_gain_vs_original_s,improved_seed_ratio,mean_runtime_s,max_runtime_s,best_seed,best_move_tag,best_optimized_route_count,best_direct_confirm_count,ground_mode,prefer_resource_exhaustion,search_method
+4,1,3486.3478197531585,3486.3478197531585,3486.3478197531585,0.0,0.0,0.0,0.0,0.0,112.74299670000073,112.74299670000073,23,original,4,7,serial,True,alns

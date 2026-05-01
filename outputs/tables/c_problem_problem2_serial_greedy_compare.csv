@@ -1,0 +1,5 @@
+﻿drone_count,baseline_total_closed_loop_s,baseline_direct_confirm_count,old_default_total_closed_loop_s,old_default_direct_confirm_count,old_default_manual_review_count,old_default_selected_nodes,serial_greedy_total_closed_loop_s,serial_greedy_direct_confirm_count,serial_greedy_manual_review_count,serial_greedy_selected_nodes,greedy_vs_old_delta_s,ground_mode
+1,5522.890755567672,0,5252.683240044456,2,14,"11,12",5252.683240044456,2,14,"11,12",0.0,serial
+2,4748.109198163765,0,4550.577345117163,2,14,"3,11",4550.577345117163,2,14,"3,11",0.0,serial
+3,4572.022219522962,0,3799.052337930042,5,11,"1,3,10,11,12",3968.4503964354744,5,11,"1,3,7,10,11",-169.39805850543235,serial
+4,4533.150608781005,0,3469.5348080073354,7,9,"1,3,6,7,10,11,12",3486.3478197531585,7,9,"1,3,4,7,10,11,12",-16.813011745823133,serial

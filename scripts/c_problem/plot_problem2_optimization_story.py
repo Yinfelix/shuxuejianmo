@@ -28,7 +28,7 @@ def _annotate_bars(ax, values: list[float], fmt: str = "{:.1f}") -> None:
 
 def _load_story_context() -> dict[str, pd.DataFrame | pd.Series | int]:
     journey = _read_csv(TABLE_DIR / "c_problem_full_optimization_journey_compare.csv")
-    f_guidance = _read_csv(TABLE_DIR / "c_problem_problem2_f_guidance_compare.csv")
+    serial_compare = _read_csv(TABLE_DIR / "c_problem_problem2_serial_greedy_compare.csv")
     joint = _read_csv(TABLE_DIR / "c_problem_problem2_joint_summary.csv")
     swap = _read_csv(TABLE_DIR / "c_problem_problem2_swap_summary.csv")
     threshold = _read_csv(TABLE_DIR / "c_problem_problem2_threshold_sensitivity_summary.csv")
@@ -40,11 +40,11 @@ def _load_story_context() -> dict[str, pd.DataFrame | pd.Series | int]:
     best_threshold = threshold.loc[threshold["drone_count"] == 4].sort_values("closed_loop_time_s").iloc[0]
     swap_k4 = swap.loc[(swap["drone_count"] == 4) & (swap["method"] == "joint_with_swap")].iloc[0]
     joint_k4 = joint.loc[joint["drone_count"] == 4].iloc[0]
-    f_k4 = f_guidance.loc[f_guidance["drone_count"] == 4].iloc[0]
+    serial_k4 = serial_compare.loc[serial_compare["drone_count"] == 4].iloc[0]
 
     return {
         "journey_k4": journey.loc[journey["drone_count"] == 4].copy(),
-        "f_k4": f_k4,
+        "serial_k4": serial_k4,
         "joint_k4": joint_k4,
         "swap_k4": swap_k4,
         "best_threshold": best_threshold,
@@ -58,7 +58,7 @@ def _load_story_context() -> dict[str, pd.DataFrame | pd.Series | int]:
 
 
 def _build_scheme_summary(context: dict[str, pd.DataFrame | pd.Series | int]) -> pd.DataFrame:
-    f_k4 = context["f_k4"]
+    serial_k4 = context["serial_k4"]
     joint_k4 = context["joint_k4"]
     swap_k4 = context["swap_k4"]
     best_threshold = context["best_threshold"]
@@ -67,10 +67,20 @@ def _build_scheme_summary(context: dict[str, pd.DataFrame | pd.Series | int]) ->
     return pd.DataFrame(
         [
             {
-                "scheme": "Default F",
-                "closed_loop_time_s": float(f_k4["f_default_s"]),
-                "direct_confirm_count": int(f_k4["f_default_direct_confirm_count"]),
-                "manual_review_count": 16 - int(f_k4["f_default_direct_confirm_count"]),
+                "scheme": "Old default serial",
+                "closed_loop_time_s": float(serial_k4["old_default_total_closed_loop_s"]),
+                "direct_confirm_count": int(serial_k4["old_default_direct_confirm_count"]),
+                "manual_review_count": int(serial_k4["old_default_manual_review_count"]),
+                "route_count": 4,
+                "extra_hover_time_s": float(joint_k4["extra_hover_time_s"]),
+                "air_stage_time_s": float(joint_k4["air_stage_time_s"]),
+                "ground_stage_time_s": float(joint_k4["ground_stage_time_s"]),
+            },
+            {
+                "scheme": "Serial greedy",
+                "closed_loop_time_s": float(serial_k4["serial_greedy_total_closed_loop_s"]),
+                "direct_confirm_count": int(serial_k4["serial_greedy_direct_confirm_count"]),
+                "manual_review_count": int(serial_k4["serial_greedy_manual_review_count"]),
                 "route_count": 4,
                 "extra_hover_time_s": float(joint_k4["extra_hover_time_s"]),
                 "air_stage_time_s": float(joint_k4["air_stage_time_s"]),
@@ -203,7 +213,7 @@ def plot_storyboard(context: dict[str, pd.DataFrame | pd.Series | int], data) ->
     axes[0, 1].legend(frameon=False)
     axes[0, 1].grid(axis="y", alpha=0.2, linestyle="--")
 
-    _plot_status_map(axes[1, 0], coords, context["default_target"], "Default F node status")
+    _plot_status_map(axes[1, 0], coords, context["default_target"], "Old default serial node status")
     alns_target = context["best_alns_target"].rename(columns={"direct_confirmed": "is_direct_confirmed"})
     _plot_status_map(axes[1, 1], coords, alns_target, "Best ALNS node status")
 
@@ -295,7 +305,8 @@ def plot_flowchart(context: dict[str, pd.DataFrame | pd.Series | int]) -> Path:
 
     _flow_box(ax, 0.04, 0.58, 0.18, 0.22, "Problem 1 routes", "K-means start\nroute grouping", "#8da0cb")
     _flow_box(ax, 0.28, 0.58, 0.18, 0.22, "Unified F baseline", "K=4 closed loop\n3540.7 s", "#7570b3")
-    _flow_box(ax, 0.52, 0.58, 0.18, 0.22, "Joint solver", "direct-confirm +\nground reroute\n3469.5 s", "#1f78b4")
+    _flow_box(ax, 0.30, 0.58, 0.18, 0.22, "Old default serial", "serial scoring +\nground reroute\n3469.5 s", "#1f78b4")
+    _flow_box(ax, 0.52, 0.58, 0.18, 0.22, "Serial greedy", "resource-exhaust\ncontrast\n3486.3 s", "#e31a1c")
     _flow_box(ax, 0.76, 0.58, 0.18, 0.22, "Swap local search", "cross-route swap\n3442.8 s", "#66a61e")
     _flow_box(ax, 0.52, 0.18, 0.18, 0.22, "Threshold branch", "multiplier = 0.8\n3349.8 s", "#e6ab02")
     _flow_box(ax, 0.76, 0.18, 0.18, 0.22, "ALNS best", "seed 23, 8 routes\n2997.6 s\n12 direct / 4 manual", "#d95f02")
